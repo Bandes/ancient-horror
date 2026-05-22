@@ -1,0 +1,19 @@
+# DragonRuby engine (download separately — do not commit)
+dragonruby
+dragonruby.exe
+DragonRuby\ GTK.app/
+
+# Runtime-generated directories
+tmp/
+logs/
+errors/
+
+# Local Claude Code settings
+.claude/
+
+# Export builds
+builds/
+
+# OS artifacts
+.DS_Store
+Thumbs.db

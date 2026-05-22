@@ -1,0 +1,13 @@
+devid=charley
+devtitle=Charles Bandes
+gameid=ancient-and-nameless
+gametitle=Ancient and Nameless
+version=0.1
+icon=metadata/icon.png
+compile_ruby=false
+orientation=landscape
+hd=false
+highdpi=false
+hd_letterbox=false
+hd_max_scale=0
+sandbox_disabled=false
