@@ -1,6 +1,5 @@
-devid=dev-id
-devtitle=dev-title
+devid=your.dev.id
+devtitle=Your Developer Title
 gameid=ancient-horror
 gametitle=Ancient Horror
 version=0.0
-icon=metadata/icon.png
