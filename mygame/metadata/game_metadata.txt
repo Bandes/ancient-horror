@@ -1,0 +1,6 @@
+devid=dev-id
+devtitle=dev-title
+gameid=ancient-horror
+gametitle=Ancient Horror
+version=0.0
+icon=metadata/icon.png
