@@ -1,5 +1,5 @@
 devid=your.dev.id
 devtitle=Your Developer Title
-gameid=ancient-horror
-gametitle=Ancient Horror
+gameid=your-game-id
+gametitle=Your Game Title
 version=0.0
