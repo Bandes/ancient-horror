@@ -42,13 +42,14 @@ class Player
     r = RADIUS
     new_x = @x + vx
     new_y = @y + vy
-    new_x = @x if Cave.blocks_movement?(cave_grid, (new_x + r).to_i, @y.to_i) ||
-                   Cave.blocks_movement?(cave_grid, (new_x - r).to_i, @y.to_i)
-    new_y = @y if Cave.blocks_movement?(cave_grid, @x.to_i, (new_y + r).to_i) ||
-                   Cave.blocks_movement?(cave_grid, @x.to_i, (new_y - r).to_i)
+    new_x = @x if (vx > 0 && Cave.blocks_movement?(cave_grid, (new_x + r).to_i, @y.to_i)) ||
+                   (vx < 0 && Cave.blocks_movement?(cave_grid, (new_x - r).to_i, @y.to_i))
+    new_y = @y if (vy > 0 && Cave.blocks_movement?(cave_grid, @x.to_i, (new_y + r).to_i)) ||
+                   (vy < 0 && Cave.blocks_movement?(cave_grid, @x.to_i, (new_y - r).to_i))
 
-    @x = new_x.clamp(r.to_f, (1280 - r).to_f)
-    @y = new_y.clamp(r.to_f, (720 - r).to_f)
+    inner = Cave::TILE_SIZE
+    @x = new_x.clamp(inner + r.to_f, 1280 - inner - r.to_f)
+    @y = new_y.clamp(inner + r.to_f, 720  - inner - r.to_f)
     @hit_timer -= 1 if @hit_timer > 0
   end
 

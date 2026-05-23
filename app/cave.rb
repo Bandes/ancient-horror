@@ -288,6 +288,11 @@ module Cave
     end
   end
 
+  OUTER_CORNER_NW = 'sprites/environment/tiles/tile_(_80_).png'
+  OUTER_CORNER_NE = 'sprites/environment/tiles/tile_(_81_).png'
+  OUTER_CORNER_SW = 'sprites/environment/tiles/tile_(_82_).png'
+  OUTER_CORNER_SE = 'sprites/environment/tiles/tile_(_83_).png'
+
   def self.wall_tile(grid, c, r, hash)
     floor_s  = !wall?(grid, c,   r - 1)
     floor_n  = !wall?(grid, c,   r + 1)
@@ -298,17 +303,38 @@ module Cave
     floor_ne = !wall?(grid, c + 1, r + 1)
     floor_nw = !wall?(grid, c - 1, r + 1)
 
-    # On the outer border, invert edge selection so the stone face points outward
     outer = (c == 0 || c == COLS - 1 || r == 0 || r == ROWS - 1)
 
+    if outer
+      # Screen corners get two-sided stone tiles
+      return OUTER_CORNER_NW if r == ROWS - 1 && c == 0
+      return OUTER_CORNER_NE if r == ROWS - 1 && c == COLS - 1
+      return OUTER_CORNER_SW if r == 0        && c == 0
+      return OUTER_CORNER_SE if r == 0        && c == COLS - 1
+
+      # Other border cells: stone face points outward; invert edge direction
+      if floor_s then return EDGE_N[hash % EDGE_N.length]
+      elsif floor_n then return EDGE_S[hash % EDGE_S.length]
+      elsif floor_e then return EDGE_W
+      elsif floor_w then return EDGE_E
+      end
+
+      # No orthogonal floor on outer border: show stone face on the exposed side
+      return EDGE_N[hash % EDGE_N.length] if r == ROWS - 1
+      return EDGE_S[hash % EDGE_S.length] if r == 0
+      return EDGE_W if c == 0
+      return EDGE_E
+    end
+
+    # Interior walls
     if floor_s
-      (outer ? EDGE_N : EDGE_S)[hash % EDGE_S.length]
+      EDGE_S[hash % EDGE_S.length]
     elsif floor_n
-      (outer ? EDGE_S : EDGE_N)[hash % EDGE_N.length]
+      EDGE_N[hash % EDGE_N.length]
     elsif floor_e
-      outer ? EDGE_W : EDGE_E
+      EDGE_E
     elsif floor_w
-      outer ? EDGE_E : EDGE_W
+      EDGE_W
     elsif floor_se
       CORNER_SE
     elsif floor_sw
