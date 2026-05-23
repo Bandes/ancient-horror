@@ -5,7 +5,7 @@ require 'app/player'
 require 'app/hunter'
 
 CREATURE_COUNT        = 50
-LARGE_FOR_WIN         = 3
+LARGE_FOR_WIN         = 2
 MAX_SHOGGOTHS         = 120
 SPAWN_INTERVAL        = 360   # new shoggoth every 6 seconds
 SUMMON_TICKS_NEEDED   = 300   # hold altar 5 seconds to win
@@ -59,6 +59,9 @@ def defaults(args)
       start_tick: -rand(40)
     )
   }
+
+  args.state.cthulhu_idle   = SpriteAnimator.new(path: 'sprites/chthulu.png', frames: CthulhuFrames::IDLE,   frame_duration: 8)
+  args.state.cthulhu_attack = SpriteAnimator.new(path: 'sprites/chthulu.png', frames: CthulhuFrames::ATTACK, frame_duration: 7)
 
   args.state.boids = Flock.spawn(
     CREATURE_COUNT,
@@ -347,7 +350,7 @@ def intro_screen(args)
                            alignment_enum: 1, size_enum: 0, r: 200, g: 200, b: 200, a: 255 }
   args.outputs.labels << { x: 640, y: 350, text: '8 small shoggoths merge near an idol. 4 medium ones merge into a large. March them to the altar.',
                            alignment_enum: 1, size_enum: 0, r: 200, g: 200, b: 200, a: 255 }
-  args.outputs.labels << { x: 640, y: 320, text: 'Hold the altar with 3 great ones to complete the ritual.',
+  args.outputs.labels << { x: 640, y: 320, text: 'Hold the altar with 2 great ones to complete the ritual.',
                            alignment_enum: 1, size_enum: 0, r: 200, g: 200, b: 200, a: 255 }
   args.outputs.labels << { x: 640, y: 270, text: '[ E ] Stomp — blasts shoggoths and hunters back',
                            alignment_enum: 1, size_enum: 0, r: 180, g: 160, b: 200, a: 255 }
@@ -380,17 +383,43 @@ def win_screen(args)
   return false unless args.state.won
 
   render_base(args)
+
+  age = args.state.end_tick ? Kernel.tick_count - args.state.end_tick : 0
+
+  # Dark overlay fades in
+  fade_a = [age * 3, 180].min
+  args.outputs.sprites << { x: 0, y: 0, w: 1280, h: 720, path: :solid, r: 5, g: 0, b: 15, a: fade_a }
+
+  # Emit purple particles from Cthulhu position while visible
+  if age > 30 && age % 3 == 0
+    emit_particles(args, 640, 320, 3, r: 120 + rand(80), g: 20, b: 220 + rand(35), speed: 2.5, size: 5)
+  end
+  args.state.particles.each { |p| p[:x] += p[:dx]; p[:y] += p[:dy]; p[:dx] *= 0.93; p[:dy] *= 0.93; p[:a] -= 5 }
+  args.state.particles.reject! { |p| p[:a] <= 0 }
+  args.outputs.sprites << args.state.particles
+
+  # Choose animation: attack after 3 seconds
+  anim = age > 180 ? args.state.cthulhu_attack : args.state.cthulhu_idle
+  if anim
+    sprite = anim.sprite(Kernel.tick_count, anchor_x: 640, anchor_y: 320, scale: 4.0)
+    sprite_a = [age * 4, 255].min
+    sprite[:a] = sprite_a
+    args.outputs.sprites << sprite
+  end
+
   elapsed = args.state.end_tick && args.state.start_tick ? args.state.end_tick - args.state.start_tick : 0
   secs = elapsed.idiv(60)
   time_str = "#{secs.idiv(60)}m #{secs % 60}s"
-  args.outputs.labels << { x: 640, y: 430, text: 'THE ANCIENT ONE RISES',
-                           alignment_enum: 1, size_enum: 8, r: 120, g: 60, b: 220, a: 255 }
-  args.outputs.labels << { x: 640, y: 385, text: 'THE WORLD IS UNMADE',
-                           alignment_enum: 1, size_enum: 4, r: 200, g: 150, b: 255, a: 255 }
-  args.outputs.labels << { x: 640, y: 345, text: "Ritual completed in #{time_str}",
-                           alignment_enum: 1, size_enum: 1, r: 180, g: 140, b: 255, a: 255 }
-  args.outputs.labels << { x: 640, y: 310, text: 'click to play again',
-                           alignment_enum: 1, r: 160, g: 160, b: 160, a: 255 }
+
+  text_a = [((age - 60) * 5), 255].min.clamp(0, 255)
+  args.outputs.labels << { x: 640, y: 530, text: 'THE ANCIENT ONE RISES',
+                           alignment_enum: 1, size_enum: 8, r: 180, g: 80, b: 255, a: text_a }
+  args.outputs.labels << { x: 640, y: 485, text: 'THE WORLD IS UNMADE',
+                           alignment_enum: 1, size_enum: 4, r: 220, g: 160, b: 255, a: text_a }
+  args.outputs.labels << { x: 640, y: 120, text: "Ritual completed in #{time_str}",
+                           alignment_enum: 1, size_enum: 1, r: 180, g: 140, b: 255, a: text_a }
+  args.outputs.labels << { x: 640, y: 80, text: 'click to play again',
+                           alignment_enum: 1, r: 140, g: 140, b: 160, a: text_a }
   args.state = {} if args.inputs.mouse.click
   true
 end
