@@ -9,26 +9,64 @@ module Cave
 
   # Pure floor tiles — no wall components, safe to tile anywhere
   FLOOR_TILES = [
-    'sprites/environment/tiles/Tile (20).png',
-    'sprites/environment/tiles/Tile (20).png',
-    'sprites/environment/tiles/Tile (20).png',
-    'sprites/environment/tiles/Tile (14).png',
-    'sprites/environment/tiles/Tile (16).png',
-    'sprites/environment/tiles/Tile (17).png',
-    'sprites/environment/tiles/Tile (19).png',
-    'sprites/environment/tiles/Tile (21).png',
-    'sprites/environment/tiles/Tile (22).png',
+    'sprites/environment/tiles/tile_(_20_).png',
+    'sprites/environment/tiles/tile_(_20_).png',
+    'sprites/environment/tiles/tile_(_20_).png',
+    'sprites/environment/tiles/tile_(_14_).png',
+    'sprites/environment/tiles/tile_(_16_).png',
+    'sprites/environment/tiles/tile_(_17_).png',
+    'sprites/environment/tiles/tile_(_19_).png',
+    'sprites/environment/tiles/tile_(_21_).png',
+    'sprites/environment/tiles/tile_(_22_).png',
   ].freeze
 
-  GRATE_TILE = 'sprites/environment/tiles/Tile (13).png'
+  GRATE_TILE = 'sprites/environment/tiles/tile_(_13_).png'
 
-  # Pure wall tiles — dark spiral stone
   WALL_TILES = [
-    'sprites/environment/tiles/Tile (9).png',
-    'sprites/environment/tiles/Tile (10).png',
-    'sprites/environment/tiles/Tile (10).png',
-    'sprites/environment/tiles/Tile (12).png',
+    'sprites/environment/tiles/tile_(_9_).png',
+    'sprites/environment/tiles/tile_(_10_).png',
+    'sprites/environment/tiles/tile_(_10_).png',
+    'sprites/environment/tiles/tile_(_12_).png',
   ].freeze
+
+  PROP_POOL = [
+    { path: 'sprites/environment/objects/skeleton_1.png',      w: 32, h: 32, cr: 10 },
+    { path: 'sprites/environment/objects/skeleton_2.png',      w: 32, h: 32, cr: 10 },
+    { path: 'sprites/environment/objects/barrel_(_1_).png',    w: 28, h: 32, cr: 13 },
+    { path: 'sprites/environment/objects/barrel_(_2_).png',    w: 28, h: 32, cr: 13 },
+    { path: 'sprites/environment/objects/barrel_(_3_).png',    w: 28, h: 32, cr: 13 },
+    { path: 'sprites/environment/objects/pot_(_1_).png',       w: 24, h: 28, cr: 11 },
+    { path: 'sprites/environment/objects/pot_(_2_).png',       w: 24, h: 28, cr: 11 },
+    { path: 'sprites/environment/objects/crate.png',           w: 30, h: 30, cr: 13 },
+  ].freeze
+
+  PROP_COUNT   = 14
+  PROP_MIN_GAP = 100   # px between prop centers — keeps corridors clear for large shoggoths
+
+  def self.generate_props(grid, exclude_cells)
+    cells = floor_cells(grid).reject { |c, r| exclude_cells.any? { |ec, er| ec == c && er == r } }
+    placed = []
+    cells.shuffle.each do |col, row|
+      break if placed.length >= PROP_COUNT
+      cx = col * TILE_SIZE + TILE_SIZE / 2
+      cy = row * TILE_SIZE + TILE_SIZE / 2
+      too_close = placed.any? { |p|
+        dx = p[:cx] - cx; dy = p[:cy] - cy
+        dx * dx + dy * dy < PROP_MIN_GAP * PROP_MIN_GAP
+      }
+      placed << { col: col, row: row, cx: cx, cy: cy } unless too_close
+    end
+    placed.map do |slot|
+      col = slot[:col]; row = slot[:row]; cx = slot[:cx]; cy = slot[:cy]
+      prop = PROP_POOL[(col * 7 + row * 13) % PROP_POOL.length]
+      cx = col * TILE_SIZE + TILE_SIZE / 2
+      cy = row * TILE_SIZE + TILE_SIZE / 2
+      { sprite: { x: cx - prop[:w] / 2, y: cy - prop[:h] / 2,
+                  w: prop[:w], h: prop[:h],
+                  path: prop[:path], blendmode_enum: 1 },
+        cx: cx.to_f, cy: cy.to_f, cr: prop[:cr] }
+    end
+  end
 
   def self.generate
     10.times do
@@ -179,6 +217,36 @@ module Cave
     wall?(grid, px.idiv(TILE_SIZE), py.idiv(TILE_SIZE))
   end
 
+  # Like wall_at_px? but accounts for the walkable floor-bleed strip on edge tiles.
+  WALL_BLEED = 20
+
+  def self.blocks_movement?(grid, px, py)
+    col = px.idiv(TILE_SIZE)
+    row = py.idiv(TILE_SIZE)
+    return true  if col < 0 || col >= COLS || row < 0 || row >= ROWS
+    return false unless grid[row][col] == :wall
+
+    lx = px - col * TILE_SIZE   # 0 = west edge, 63 = east edge
+    ly = py - row * TILE_SIZE   # 0 = south edge, 63 = north edge
+
+    fs = row > 0        && grid[row - 1][col] != :wall
+    fn = row < ROWS - 1 && grid[row + 1][col] != :wall
+    fe = col < COLS - 1 && grid[row][col + 1] != :wall
+    fw = col > 0        && grid[row][col - 1] != :wall
+
+    if fs
+      ly >= WALL_BLEED                  # south bleed: bottom strip walkable
+    elsif fn
+      ly < TILE_SIZE - WALL_BLEED      # north bleed: top strip walkable
+    elsif fe
+      lx < TILE_SIZE - WALL_BLEED      # east bleed: right strip walkable
+    elsif fw
+      lx >= WALL_BLEED                  # west bleed: left strip walkable
+    else
+      true
+    end
+  end
+
   def self.walkable_pixel?(grid, px, py)
     !wall_at_px?(grid, px, py)
   end
@@ -193,12 +261,22 @@ module Cave
     cells
   end
 
+  # Edge/corner wall tiles keyed by which orthogonal/diagonal neighbors are floor
+  EDGE_S  = ['sprites/environment/tiles/tile_(_25_).png', 'sprites/environment/tiles/tile_(_26_).png'].freeze
+  EDGE_N  = ['sprites/environment/tiles/tile_(_36_).png', 'sprites/environment/tiles/tile_(_37_).png'].freeze
+  EDGE_E  = 'sprites/environment/tiles/tile_(_29_).png'
+  EDGE_W  = 'sprites/environment/tiles/tile_(_33_).png'
+  CORNER_SE = 'sprites/environment/tiles/tile_(_24_).png'
+  CORNER_SW = 'sprites/environment/tiles/tile_(_28_).png'
+  CORNER_NE = 'sprites/environment/tiles/tile_(_34_).png'
+  CORNER_NW = 'sprites/environment/tiles/tile_(_38_).png'
+
   def self.render(grid)
     ROWS.times.flat_map do |r|
       COLS.times.map do |c|
         hash = c * 7 + r * 13
         path = if grid[r][c] == :wall
-          WALL_TILES[hash % WALL_TILES.length]
+          wall_tile(grid, c, r, hash)
         elsif hash % 18 == 0
           GRATE_TILE
         else
@@ -206,6 +284,40 @@ module Cave
         end
         { x: c * TILE_SIZE, y: r * TILE_SIZE, w: TILE_SIZE, h: TILE_SIZE, path: path, blendmode_enum: 1 }
       end
+    end
+  end
+
+  def self.wall_tile(grid, c, r, hash)
+    floor_s  = !wall?(grid, c,   r - 1)
+    floor_n  = !wall?(grid, c,   r + 1)
+    floor_e  = !wall?(grid, c + 1, r)
+    floor_w  = !wall?(grid, c - 1, r)
+    floor_se = !wall?(grid, c + 1, r - 1)
+    floor_sw = !wall?(grid, c - 1, r - 1)
+    floor_ne = !wall?(grid, c + 1, r + 1)
+    floor_nw = !wall?(grid, c - 1, r + 1)
+
+    # On the outer border, invert edge selection so the stone face points outward
+    outer = (c == 0 || c == COLS - 1 || r == 0 || r == ROWS - 1)
+
+    if floor_s
+      (outer ? EDGE_N : EDGE_S)[hash % EDGE_S.length]
+    elsif floor_n
+      (outer ? EDGE_S : EDGE_N)[hash % EDGE_N.length]
+    elsif floor_e
+      outer ? EDGE_W : EDGE_E
+    elsif floor_w
+      outer ? EDGE_E : EDGE_W
+    elsif floor_se
+      CORNER_SE
+    elsif floor_sw
+      CORNER_SW
+    elsif floor_ne
+      CORNER_NE
+    elsif floor_nw
+      CORNER_NW
+    else
+      WALL_TILES[hash % WALL_TILES.length]
     end
   end
 end

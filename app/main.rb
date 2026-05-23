@@ -1,7 +1,7 @@
-require 'app/sprite_animator.rb'
-require 'app/cave.rb'
-require 'app/boid.rb'
-require 'app/player.rb'
+require 'app/sprite_animator'
+require 'app/cave'
+require 'app/boid'
+require 'app/player'
 
 CREATURE_COUNT       = 50
 LARGE_FOR_WIN        = 3
@@ -15,7 +15,9 @@ end
 
 def tick(args)
   defaults(args)
+  return if intro_screen(args)
   return if game_over_screen(args) || win_screen(args)
+
   handle_input(args)
   calc(args)
   check_merge(args)
@@ -38,7 +40,7 @@ def defaults(args)
     SpriteAnimator.new(
       path: 'sprites/creature.png',
       frames: CreatureFrames::ALL,
-      frame_duration: 4 + rand(4),
+      frame_duration: Numeric.rand(4..7),
       start_tick: -rand(60)
     )
   }
@@ -53,33 +55,60 @@ def defaults(args)
   args.state.won           = false
   args.state.game_over     = false
   args.state.summon_ticks  = 0
-  args.state.ritual_stage  = 0   # 0-3: how many large shoggoths have reached altar
+  args.state.ritual_stage  = 0 # 0-3: how many large shoggoths have reached altar
   args.state.floor_cells   = Cave.floor_cells(args.state.cave_grid)
-  args.state.tile_sprites  = Cave.render(args.state.cave_grid)
+  exclude = [[cave_data[:spawn_col], cave_data[:spawn_row]],
+             [cave_data[:altar_col], cave_data[:altar_row]]]
+  props = Cave.generate_props(args.state.cave_grid, exclude)
+  args.state.prop_colliders = props.map { |p| { cx: p[:cx], cy: p[:cy], cr: p[:cr] } }
+  args.state.bg_sprites = Cave.render(args.state.cave_grid) + props.map { |p| p[:sprite] }
+  args.state.intro         = true
+  args.state.start_tick    = nil
   args.state.initialized   = true
 end
 
 IDOL_INTERACT_RADIUS = 40
 
+def resolve_prop_collisions(x, y, r, prop_colliders)
+  prop_colliders.each do |p|
+    dx = x - p[:cx]
+    dy = y - p[:cy]
+    min_d = r + p[:cr]
+    d2 = dx * dx + dy * dy
+    next if d2 >= min_d * min_d || d2 < 0.0001
+
+    d = Math.sqrt(d2)
+    push = min_d - d
+    x += dx / d * push
+    y += dy / d * push
+  end
+  [x, y]
+end
+
 def handle_input(args)
   player = args.state.player
   player.update(args.inputs, args.state.cave_grid)
+  player.x, player.y = resolve_prop_collisions(player.x, player.y, Player::RADIUS, args.state.prop_colliders)
 
   return unless args.inputs.keyboard.key_down.space
 
   args.state.idols.each do |idol|
     next unless idol[:placed]
-    dx = idol[:x] - player.x; dy = idol[:y] - player.y
-    if dx * dx + dy * dy < IDOL_INTERACT_RADIUS * IDOL_INTERACT_RADIUS
-      idol[:placed] = false
-      player.idols_held += 1
-      return
-    end
+
+    dx = idol[:x] - player.x
+    dy = idol[:y] - player.y
+    next unless dx * dx + dy * dy < IDOL_INTERACT_RADIUS * IDOL_INTERACT_RADIUS
+
+    idol[:placed] = false
+    player.idols_held += 1
+    return
   end
 
   return unless player.idols_held > 0
+
   idol = args.state.idols.find { |id| !id[:placed] }
   return unless idol
+
   idol[:placed] = true
   idol[:x] = player.x
   idol[:y] = player.y
@@ -87,28 +116,97 @@ def handle_input(args)
 end
 
 def calc(args)
+  player = args.state.player
+  player.tick_stomp
+
+  # Stomp: E key blasts nearby shoggoths away
+  if args.inputs.keyboard.key_down.e && player.stomp_ready?
+    player.stomp!
+    stomp_r_sq = Player::STOMP_RADIUS**2
+    args.state.boids.each do |b|
+      dx = b.x - player.x
+      dy = b.y - player.y
+      d2 = dx * dx + dy * dy
+      next if d2 > stomp_r_sq || d2 < 0.0001
+
+      d     = Math.sqrt(d2)
+      force = Player::STOMP_FORCE * (1.0 - d / Player::STOMP_RADIUS)
+      b.vx += dx / d * force
+      b.vy += dy / d * force
+    end
+    args.state.stomp_flash = 8
+  end
+  args.state.stomp_flash = [(args.state.stomp_flash || 0) - 1, 0].max
+
   Flock.step(
     args.state.boids,
     cave_grid: args.state.cave_grid,
-    idols:     args.state.idols,
-    altar_x:   args.state.altar_x,
-    altar_y:   args.state.altar_y
+    idols: args.state.idols,
+    altar_x: args.state.altar_x,
+    altar_y: args.state.altar_y,
+    player_x: player.x,
+    player_y: player.y,
+    ritual_stage: args.state.ritual_stage
   )
 
-  player = args.state.player
+  prop_colliders = args.state.prop_colliders
   args.state.boids.each do |b|
+    b.x, b.y = resolve_prop_collisions(b.x, b.y, b.collision_r, prop_colliders)
+  end
+
+  # Medium/large shoggoths bud off small ones periodically
+  spawned = []
+  args.state.boids.each do |b|
+    next if b.tier < 2
+
+    b.spawn_timer -= 1
+    next if b.spawn_timer > 0
+
+    interval = b.tier == 2 ? 480 : 300
+    b.spawn_timer = interval + rand(interval)
+    next if args.state.boids.length + spawned.length >= MAX_SHOGGOTHS
+
+    angle = rand * Math::PI * 2
+    offset = b.collision_r + Boid::TIER_R[1] + 4
+    spawned << Boid.new(
+      x: b.x + Math.cos(angle) * offset,
+      y: b.y + Math.sin(angle) * offset,
+      vx: Math.cos(angle) * Flock::MIN_SPEED,
+      vy: Math.sin(angle) * Flock::MIN_SPEED,
+      bias_x: Math.cos(angle), bias_y: Math.sin(angle),
+      animator: args.state.animator_factory.call,
+      personality: { speed_scale: 0.75 + rand * 0.5, wander_scale: 0.6 + rand * 0.8, bias_scale: 0.5 + rand * 1.0 },
+      tier: 1
+    )
+  end
+  args.state.boids.concat(spawned)
+
+  nearby_count = 0
+  args.state.boids.each do |b|
+    dx = b.x - player.x
+    dy = b.y - player.y
+    d2 = dx * dx + dy * dy
+    nearby_count += 1 if d2 < 150 * 150
     next if player.invincible?
-    dx = b.x - player.x; dy = b.y - player.y
+
     min_d = b.collision_r + player.radius
-    player.take_hit if dx * dx + dy * dy < min_d * min_d
+    if d2 < min_d * min_d
+      dmg = b.tier == 3 ? 2 : 1
+      player.take_hit(damage: dmg)
+    end
+  end
+
+  if nearby_count > 0
+    player.drain_sanity(0.008 + nearby_count * 0.001)
+  else
+    player.recover_sanity(0.03)
   end
 
   args.state.game_over = true if player.dead?
 
-  # Spawn new shoggoths over time — escalating pressure
-  if args.state.boids.length < MAX_SHOGGOTHS && Kernel.tick_count % SPAWN_INTERVAL == 0
-    spawn_shoggoth(args)
-  end
+  return unless args.state.boids.length < MAX_SHOGGOTHS && Kernel.tick_count % SPAWN_INTERVAL == 0
+
+  spawn_shoggoth(args)
 end
 
 def spawn_shoggoth(args)
@@ -116,11 +214,11 @@ def spawn_shoggoth(args)
   cells  = args.state.floor_cells
 
   # Prefer cells far from player
-  far = cells.select { |c, r|
+  far = cells.select do |c, r|
     px = c * Cave::TILE_SIZE + Cave::TILE_SIZE / 2
     py = r * Cave::TILE_SIZE + Cave::TILE_SIZE / 2
-    (px - player.x) ** 2 + (py - player.y) ** 2 > 200 ** 2
-  }
+    (px - player.x)**2 + (py - player.y)**2 > 200**2
+  end
   col, row = (far.empty? ? cells : far).sample
   return unless col
 
@@ -147,10 +245,10 @@ def check_merge(args)
     next unless idol[:placed]
 
     [1, 2].each do |tier|
-      nearby = boids.select { |b|
+      nearby = boids.select do |b|
         b.tier == tier &&
-          (b.x - idol[:x]) ** 2 + (b.y - idol[:y]) ** 2 < merge_r_sq
-      }
+          (b.x - idol[:x])**2 + (b.y - idol[:y])**2 < merge_r_sq
+      end
       next if nearby.length < Cave::MERGE_THRESHOLD
 
       nearby.first(Cave::MERGE_THRESHOLD).each { |b| boids.delete(b) }
@@ -175,11 +273,12 @@ end
 
 def check_win(args)
   altar_r_sq = Cave::ALTAR_RADIUS * Cave::ALTAR_RADIUS
-  ax = args.state.altar_x; ay = args.state.altar_y
+  ax = args.state.altar_x
+  ay = args.state.altar_y
 
-  large_at_altar = args.state.boids.count { |b|
-    b.tier == 3 && (b.x - ax) ** 2 + (b.y - ay) ** 2 < altar_r_sq
-  }
+  large_at_altar = args.state.boids.count do |b|
+    b.tier == 3 && (b.x - ax)**2 + (b.y - ay)**2 < altar_r_sq
+  end
 
   # Ritual stage: how many large shoggoths have gathered (ratchets up only)
   args.state.ritual_stage = [args.state.ritual_stage, large_at_altar].max
@@ -190,56 +289,97 @@ def check_win(args)
 
   if large_at_altar >= LARGE_FOR_WIN && player_at_altar
     args.state.summon_ticks += 1
-    args.state.won = true if args.state.summon_ticks >= SUMMON_TICKS_NEEDED
+    if args.state.summon_ticks >= SUMMON_TICKS_NEEDED
+      args.state.won = true
+      args.state.end_tick ||= Kernel.tick_count
+    end
   else
     # Drain slowly if not holding
     args.state.summon_ticks = [args.state.summon_ticks - 2, 0].max
   end
 end
 
+def intro_screen(args)
+  return false unless args.state.intro
+
+  args.outputs.background_color = [5, 3, 12]
+  args.outputs.labels << { x: 640, y: 520, text: 'ANCIENT AND NAMELESS',
+                           alignment_enum: 1, size_enum: 10, r: 160, g: 80, b: 255, a: 255 }
+  args.outputs.labels << { x: 640, y: 458, text: 'You are an acolyte of the Old Ones. Legend has it that one awaits deep beneath the earth.',
+                           alignment_enum: 1, size_enum: 2, r: 180, g: 150, b: 220, a: 255 }
+  args.outputs.labels << { x: 640, y: 425, text: 'It is your job to awaken it and bring about a New Age. The stars align. The altar waits.',
+                           alignment_enum: 1, size_enum: 2, r: 180, g: 150, b: 220, a: 255 }
+  args.outputs.labels << { x: 640, y: 380, text: 'Place idols [ SPACE ] to lure shoggoths.',
+                           alignment_enum: 1, size_enum: 0, r: 200, g: 200, b: 200, a: 255 }
+  args.outputs.labels << { x: 640, y: 350, text: '5 shoggoths merge near an idol. Grow them. March them to the altar.',
+                           alignment_enum: 1, size_enum: 0, r: 200, g: 200, b: 200, a: 255 }
+  args.outputs.labels << { x: 640, y: 320, text: 'Hold the altar with 3 great ones to complete the ritual.',
+                           alignment_enum: 1, size_enum: 0, r: 200, g: 200, b: 200, a: 255 }
+  args.outputs.labels << { x: 640, y: 270, text: '[ E ] Stomp — blasts shoggoths back',
+                           alignment_enum: 1, size_enum: 0, r: 180, g: 160, b: 200, a: 255 }
+  args.outputs.labels << { x: 640, y: 245, text: 'Stay calm. Stay away from them. Your sanity will not hold forever.',
+                           alignment_enum: 1, size_enum: 0, r: 160, g: 100, b: 140, a: 255 }
+  args.outputs.labels << { x: 640, y: 170, text: 'press any key to begin',
+                           alignment_enum: 1, size_enum: 0, r: 120, g: 120, b: 140, a: (Math.sin(Kernel.tick_count * 0.06) * 80 + 170).to_i }
+  kd = args.inputs.keyboard.key_down
+  if kd.space || kd.enter || kd.e || kd.w || kd.a || kd.s || kd.d ||
+     kd.up || kd.down || kd.left || kd.right || args.inputs.mouse.click
+    args.state.intro = false
+    args.state.start_tick = Kernel.tick_count
+  end
+  true
+end
+
 def game_over_screen(args)
   return false unless args.state.game_over
+
   render_base(args)
   args.outputs.labels << { x: 640, y: 400, text: 'YOU HAVE BEEN CONSUMED',
-    alignment_enum: 1, size_enum: 8, r: 255, g: 50, b: 50, a: 255 }
+                           alignment_enum: 1, size_enum: 8, r: 255, g: 50, b: 50, a: 255 }
   args.outputs.labels << { x: 640, y: 355, text: 'click to restart',
-    alignment_enum: 1, r: 200, g: 200, b: 200, a: 255 }
+                           alignment_enum: 1, r: 200, g: 200, b: 200, a: 255 }
   args.state = {} if args.inputs.mouse.click
   true
 end
 
 def win_screen(args)
   return false unless args.state.won
+
   render_base(args)
-  args.outputs.labels << { x: 640, y: 410, text: 'THE ANCIENT ONE RISES',
-    alignment_enum: 1, size_enum: 8, r: 120, g: 60, b: 220, a: 255 }
-  args.outputs.labels << { x: 640, y: 365, text: 'THE WORLD IS UNMADE',
-    alignment_enum: 1, size_enum: 4, r: 200, g: 150, b: 255, a: 255 }
-  args.outputs.labels << { x: 640, y: 330, text: 'click to play again',
-    alignment_enum: 1, r: 160, g: 160, b: 160, a: 255 }
+  elapsed = args.state.end_tick && args.state.start_tick ? args.state.end_tick - args.state.start_tick : 0
+  secs = elapsed.idiv(60)
+  time_str = "#{secs.idiv(60)}m #{secs % 60}s"
+  args.outputs.labels << { x: 640, y: 430, text: 'THE ANCIENT ONE RISES',
+                           alignment_enum: 1, size_enum: 8, r: 120, g: 60, b: 220, a: 255 }
+  args.outputs.labels << { x: 640, y: 385, text: 'THE WORLD IS UNMADE',
+                           alignment_enum: 1, size_enum: 4, r: 200, g: 150, b: 255, a: 255 }
+  args.outputs.labels << { x: 640, y: 345, text: "Ritual completed in #{time_str}",
+                           alignment_enum: 1, size_enum: 1, r: 180, g: 140, b: 255, a: 255 }
+  args.outputs.labels << { x: 640, y: 310, text: 'click to play again',
+                           alignment_enum: 1, r: 160, g: 160, b: 160, a: 255 }
   args.state = {} if args.inputs.mouse.click
   true
 end
 
 def render_base(args)
-  args.outputs.sprites << args.state.tile_sprites
+  args.outputs.sprites << args.state.bg_sprites
   args.outputs.sprites << args.state.boids.map { |b| b.render(Kernel.tick_count) }
 end
 
 def render(args)
-  args.outputs.sprites << args.state.tile_sprites
-
+  args.outputs.sprites << args.state.bg_sprites
   render_altar(args)
   render_idols(args)
 
   args.outputs.sprites << args.state.boids.map { |b| b.render(Kernel.tick_count) }
-  args.outputs.sprites << args.state.player.render(Kernel.tick_count)
+  args.outputs.sprites << args.state.player.render(Kernel.tick_count, sanity_pct: args.state.player.sanity_pct)
 
   render_hud(args)
 end
 
 def render_altar(args)
-  ax = args.state.altar_x; ay = args.state.altar_y
+  ax = args.state.altar_x
+  ay = args.state.altar_y
   stage = args.state.ritual_stage
   pulse = (Math.sin(Kernel.tick_count * 0.08) * 0.5 + 0.5)
 
@@ -256,21 +396,22 @@ def render_altar(args)
   }
 
   # Summoning progress arc (bar above altar)
-  if args.state.summon_ticks > 0
-    pct   = args.state.summon_ticks.to_f / SUMMON_TICKS_NEEDED
-    bar_w = 80
-    args.outputs.sprites << { x: ax - bar_w / 2, y: ay + 30, w: bar_w, h: 6,
-      path: :solid, r: 40, g: 40, b: 40, a: 200 }
-    args.outputs.sprites << { x: ax - bar_w / 2, y: ay + 30, w: (bar_w * pct).to_i, h: 6,
-      path: :solid, r: 180, g: 80, b: 255, a: 255 }
-    args.outputs.labels << { x: ax, y: ay + 46, text: 'HOLD!',
-      alignment_enum: 1, size_enum: -2, r: 220, g: 150, b: 255, a: 255 }
-  end
+  return unless args.state.summon_ticks > 0
+
+  pct   = args.state.summon_ticks.to_f / SUMMON_TICKS_NEEDED
+  bar_w = 80
+  args.outputs.sprites << { x: ax - bar_w / 2, y: ay + 30, w: bar_w, h: 6,
+                            path: :solid, r: 40, g: 40, b: 40, a: 200 }
+  args.outputs.sprites << { x: ax - bar_w / 2, y: ay + 30, w: (bar_w * pct).to_i, h: 6,
+                            path: :solid, r: 180, g: 80, b: 255, a: 255 }
+  args.outputs.labels << { x: ax, y: ay + 46, text: 'HOLD!',
+                           alignment_enum: 1, size_enum: -2, r: 220, g: 150, b: 255, a: 255 }
 end
 
 def render_idols(args)
   args.state.idols.each do |idol|
     next unless idol[:placed]
+
     pulse = (Math.sin(Kernel.tick_count * 0.12) * 20 + 200).to_i
     args.outputs.sprites << {
       x: idol[:x] - 8, y: idol[:y] - 8, w: 16, h: 16,
@@ -283,7 +424,6 @@ def render_hud(args)
   player = args.state.player
   stage  = args.state.ritual_stage
 
-  # Shoggoth counts by tier
   counts = [0, 0, 0]
   args.state.boids.each { |b| counts[b.tier - 1] += 1 }
 
@@ -295,11 +435,48 @@ def render_hud(args)
     r: 255, g: 255, b: 255, a: 255
   }
 
+  # Sanity bar (top-right)
+  san_w = 120
+  san_pct = player.sanity_pct
+  san_fill = (san_w * san_pct).to_i
+  san_r = (255 * (1.0 - san_pct)).to_i
+  san_g = (180 * san_pct).to_i
+  args.outputs.labels << { x: 1270, y: 710, text: 'SANITY',
+                           alignment_enum: 2, size_enum: -2, r: 200, g: 180, b: 220, a: 255 }
+  args.outputs.sprites << { x: 1270 - san_w, y: 692, w: san_w, h: 6,
+                            path: :solid, r: 40, g: 20, b: 40, a: 200 }
+  args.outputs.sprites << { x: 1270 - san_w, y: 692, w: san_fill, h: 6,
+                            path: :solid, r: san_r, g: san_g, b: 200, a: 255 }
+
+  # Stomp cooldown bar (bottom-left)
+  bar_w = 80
+  ready = player.stomp_ready?
+  args.outputs.labels << { x: 10, y: 24, text: ready ? '[E] STOMP' : '[E] ...',
+                           size_enum: -2, r: ready ? 255 : 140, g: ready ? 200 : 140, b: ready ? 80 : 140, a: 255 }
+  args.outputs.sprites << { x: 10, y: 28, w: bar_w, h: 5,
+                            path: :solid, r: 40, g: 40, b: 40, a: 180 }
+  fill = ready ? bar_w : ((1.0 - player.stomp_cooldown_pct) * bar_w).to_i
+  args.outputs.sprites << { x: 10, y: 28, w: fill, h: 5,
+                            path: :solid, r: 255, g: 180, b: 50, a: 255 }
+
+  # Stomp flash ring
+  if (args.state.stomp_flash || 0) > 0
+    r = Player::STOMP_RADIUS * (1.0 - args.state.stomp_flash / 8.0)
+    a = (args.state.stomp_flash * 30).clamp(0, 220)
+    args.outputs.sprites << { x: player.x - r, y: player.y - r, w: r * 2, h: r * 2,
+                              path: :solid, r: 255, g: 220, b: 80, a: a }
+  end
+
   # Ritual stage indicator bottom-right
-  stage_text = stage == 0 ? 'Altar: dormant' :
-               stage == 1 ? 'Altar: stirring' :
-               stage == 2 ? 'Altar: awakening' :
-                            'Altar: CONVERGE AND HOLD'
+  stage_text = if stage == 0
+                 'Altar: dormant'
+               elsif stage == 1
+                 'Altar: stirring'
+               elsif stage == 2
+                 'Altar: awakening'
+               else
+                 'Altar: CONVERGE AND HOLD'
+               end
   stage_r = [80 + stage * 50, 255].min
   args.outputs.labels << {
     x: 1270, y: 30,

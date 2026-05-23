@@ -8,6 +8,7 @@ class Boid
                 :speed_mult,
                 :speed_target,
                 :impulse_cooldown,
+                :spawn_timer,
                 :personality,
                 :tier
 
@@ -19,6 +20,7 @@ class Boid
     @speed_mult      = 1.0
     @speed_target    = 1.0
     @impulse_cooldown = rand(120)
+    @spawn_timer      = rand(300)
     @personality     = personality
     @animator        = animator
     @tier            = tier
@@ -59,7 +61,9 @@ module Flock
 
   COLLISION_DAMP       = 0.5
 
-  IDOL_ATTRACT_RADIUS_SQ = 400 * 400
+  IDOL_ATTRACT_RADIUS_SQ   = 400 * 400
+  PLAYER_ATTRACT_RADIUS_SQ = 220 * 220
+  W_PLAYER                 = 0.12
 
   def self.spawn(count, animator_factory, cave_grid:)
     cells = Cave.floor_cells(cave_grid)
@@ -92,7 +96,9 @@ module Flock
     end
   end
 
-  def self.step(boids, cave_grid:, idols:, altar_x:, altar_y:)
+  def self.step(boids, cave_grid:, idols:, altar_x:, altar_y:, player_x:, player_y:, ritual_stage: 0)
+    speed_boost   = 1.0 + ritual_stage * 0.15
+    player_w_boost = 1.0 + ritual_stage * 0.25
     perception_sq = PERCEPTION * PERCEPTION
     sep_sq        = SEPARATION_R * SEPARATION_R
 
@@ -187,6 +193,17 @@ module Flock
         ax += sx * weight; ay += sy * weight
       end
 
+      # Player as lure — tier 1+2 attracted to player at medium range
+      if b.tier < 3
+        pdx = player_x - b.x; pdy = player_y - b.y
+        pd2 = pdx * pdx + pdy * pdy
+        if pd2 < PLAYER_ATTRACT_RADIUS_SQ
+          sx, sy = steer_to(pdx, pdy, b.vx, b.vy)
+          pw = W_PLAYER * player_w_boost * (1.0 - Math.sqrt(pd2) / Math.sqrt(PLAYER_ATTRACT_RADIUS_SQ))
+          ax += sx * pw; ay += sy * pw
+        end
+      end
+
       accelerations[i] = [ax, ay]
     end
 
@@ -194,8 +211,8 @@ module Flock
       b.vx += accelerations[i][0]
       b.vy += accelerations[i][1]
 
-      effective_max = MAX_SPEED * b.personality[:speed_scale] * b.speed_mult
-      effective_min = MIN_SPEED * b.personality[:speed_scale] * b.speed_mult
+      effective_max = MAX_SPEED * b.personality[:speed_scale] * b.speed_mult * speed_boost
+      effective_min = MIN_SPEED * b.personality[:speed_scale] * b.speed_mult * speed_boost
       sp = Math.sqrt(b.vx * b.vx + b.vy * b.vy)
       if sp > effective_max
         b.vx = b.vx / sp * effective_max; b.vy = b.vy / sp * effective_max
@@ -215,19 +232,19 @@ module Flock
   def self.resolve_wall_collision(b, cave_grid)
     r = b.collision_r.to_f
 
-    if Cave.wall_at_px?(cave_grid, (b.x + r).to_i, b.y.to_i) && b.vx > 0
+    if Cave.blocks_movement?(cave_grid, (b.x + r).to_i, b.y.to_i) && b.vx > 0
       b.vx = -b.vx.abs * 0.3
       b.x  = (b.x + r).idiv(Cave::TILE_SIZE) * Cave::TILE_SIZE - r - 0.5
     end
-    if Cave.wall_at_px?(cave_grid, (b.x - r).to_i, b.y.to_i) && b.vx < 0
+    if Cave.blocks_movement?(cave_grid, (b.x - r).to_i, b.y.to_i) && b.vx < 0
       b.vx = b.vx.abs * 0.3
       b.x  = ((b.x - r).idiv(Cave::TILE_SIZE) + 1) * Cave::TILE_SIZE + r + 0.5
     end
-    if Cave.wall_at_px?(cave_grid, b.x.to_i, (b.y + r).to_i) && b.vy > 0
+    if Cave.blocks_movement?(cave_grid, b.x.to_i, (b.y + r).to_i) && b.vy > 0
       b.vy = -b.vy.abs * 0.3
       b.y  = (b.y + r).idiv(Cave::TILE_SIZE) * Cave::TILE_SIZE - r - 0.5
     end
-    if Cave.wall_at_px?(cave_grid, b.x.to_i, (b.y - r).to_i) && b.vy < 0
+    if Cave.blocks_movement?(cave_grid, b.x.to_i, (b.y - r).to_i) && b.vy < 0
       b.vy = b.vy.abs * 0.3
       b.y  = ((b.y - r).idiv(Cave::TILE_SIZE) + 1) * Cave::TILE_SIZE + r + 0.5
     end
