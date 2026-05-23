@@ -225,6 +225,7 @@ module Cave
     row = py.idiv(TILE_SIZE)
     return true  if col < 0 || col >= COLS || row < 0 || row >= ROWS
     return false unless grid[row][col] == :wall
+    return true  if col == 0 || col == COLS - 1 || row == 0 || row == ROWS - 1
 
     lx = px - col * TILE_SIZE   # 0 = west edge, 63 = east edge
     ly = py - row * TILE_SIZE   # 0 = south edge, 63 = north edge
