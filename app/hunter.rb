@@ -4,7 +4,7 @@ class Hunter
   TURN_SPEED = 0.07
   HP         = 3
   HIT_CD     = 40
-  SCALE      = 2.0
+  SCALE      = 1.6
 
   attr_accessor :x, :y, :vx, :vy, :hp, :hit_timer
 
@@ -56,6 +56,7 @@ class Hunter
 
   def render(tick_count)
     flash = @hit_timer > 0 && (@hit_timer % 6 < 3)
+    return [] unless @animator
     sprite = @animator.sprite(tick_count, anchor_x: @x, anchor_y: @y, scale: SCALE)
     sprite[:flip_horizontally] = @vx < 0
     sprite[:a] = flash ? 80 : 255

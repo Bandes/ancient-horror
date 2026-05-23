@@ -5,7 +5,8 @@ module Cave
 
   MERGE_RADIUS    = 70
   ALTAR_RADIUS    = 80
-  MERGE_THRESHOLD = 5
+  MERGE_THRESHOLD_SMALL  = 8
+  MERGE_THRESHOLD_MEDIUM = 4
 
   # Pure floor tiles — no wall components, safe to tile anywhere
   FLOOR_TILES = [
