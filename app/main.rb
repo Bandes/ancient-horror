@@ -2,12 +2,15 @@ require 'app/sprite_animator'
 require 'app/cave'
 require 'app/boid'
 require 'app/player'
+require 'app/hunter'
 
-CREATURE_COUNT       = 50
-LARGE_FOR_WIN        = 3
-MAX_SHOGGOTHS        = 120
-SPAWN_INTERVAL       = 360   # new shoggoth every 6 seconds
-SUMMON_TICKS_NEEDED  = 300   # hold altar 5 seconds to win
+CREATURE_COUNT        = 50
+LARGE_FOR_WIN         = 3
+MAX_SHOGGOTHS         = 120
+SPAWN_INTERVAL        = 360   # new shoggoth every 6 seconds
+SUMMON_TICKS_NEEDED   = 300   # hold altar 5 seconds to win
+HUNTER_SPAWN_INTERVAL = 600   # new hunter every 10 seconds
+MAX_HUNTERS           = 5
 
 def boot(args)
   args.state = {}
@@ -21,7 +24,10 @@ def tick(args)
   handle_input(args)
   calc(args)
   check_merge(args)
+  check_infighting(args)
   check_win(args)
+  tick_hunters(args)
+  tick_particles(args)
   render(args)
 end
 
@@ -56,6 +62,9 @@ def defaults(args)
   args.state.game_over     = false
   args.state.summon_ticks  = 0
   args.state.ritual_stage  = 0 # 0-3: how many large shoggoths have reached altar
+  args.state.particles     = []
+  args.state.hunters       = []
+  args.state.hunter_timer  = 0
   args.state.floor_cells   = Cave.floor_cells(args.state.cave_grid)
   exclude = [[cave_data[:spawn_col], cave_data[:spawn_row]],
              [cave_data[:altar_col], cave_data[:altar_row]]]
@@ -133,6 +142,15 @@ def calc(args)
       force = Player::STOMP_FORCE * (1.0 - d / Player::STOMP_RADIUS)
       b.vx += dx / d * force
       b.vy += dy / d * force
+    end
+    args.state.hunters.each do |h|
+      dx = h.x - player.x; dy = h.y - player.y
+      d2 = dx * dx + dy * dy
+      next if d2 > stomp_r_sq || d2 < 0.0001
+      d = Math.sqrt(d2)
+      force = Player::STOMP_FORCE * 1.5 * (1.0 - d / Player::STOMP_RADIUS)
+      h.vx += dx / d * force; h.vy += dy / d * force
+      h.take_hit
     end
     args.state.stomp_flash = 8
   end
@@ -244,14 +262,14 @@ def check_merge(args)
   args.state.idols.each do |idol|
     next unless idol[:placed]
 
-    [1, 2].each do |tier|
+    { 1 => 8, 2 => 4 }.each do |tier, threshold|
       nearby = boids.select do |b|
         b.tier == tier &&
           (b.x - idol[:x])**2 + (b.y - idol[:y])**2 < merge_r_sq
       end
-      next if nearby.length < Cave::MERGE_THRESHOLD
+      next if nearby.length < threshold
 
-      nearby.first(Cave::MERGE_THRESHOLD).each { |b| boids.delete(b) }
+      nearby.first(threshold).each { |b| boids.delete(b) }
 
       angle = rand * Math::PI * 2
       boids << Boid.new(
@@ -263,6 +281,10 @@ def check_merge(args)
         personality: { speed_scale: 0.9, wander_scale: 0.7, bias_scale: 0.6 },
         tier: tier + 1
       )
+
+      pr, pg, pb = tier == 1 ? [80, 255, 120] : [200, 80, 255]
+      emit_particles(args, idol[:x], idol[:y], 20, r: pr, g: pg, b: pb, speed: 3.5, size: 6)
+      args.state.merge_flash = 6
 
       idol[:placed] = false
       args.state.player.idols_held += 1
@@ -289,6 +311,9 @@ def check_win(args)
 
   if large_at_altar >= LARGE_FOR_WIN && player_at_altar
     args.state.summon_ticks += 1
+    if Kernel.tick_count % 4 == 0
+      emit_particles(args, ax, ay, 3, r: 160 + rand(60), g: 40, b: 240 + rand(15), speed: 1.2 + rand * 0.8, size: 5)
+    end
     if args.state.summon_ticks >= SUMMON_TICKS_NEEDED
       args.state.won = true
       args.state.end_tick ||= Kernel.tick_count
@@ -311,13 +336,13 @@ def intro_screen(args)
                            alignment_enum: 1, size_enum: 2, r: 180, g: 150, b: 220, a: 255 }
   args.outputs.labels << { x: 640, y: 380, text: 'Place idols [ SPACE ] to lure shoggoths.',
                            alignment_enum: 1, size_enum: 0, r: 200, g: 200, b: 200, a: 255 }
-  args.outputs.labels << { x: 640, y: 350, text: '5 shoggoths merge near an idol. Grow them. March them to the altar.',
+  args.outputs.labels << { x: 640, y: 350, text: '8 small shoggoths merge near an idol. 4 medium ones merge into a large. March them to the altar.',
                            alignment_enum: 1, size_enum: 0, r: 200, g: 200, b: 200, a: 255 }
   args.outputs.labels << { x: 640, y: 320, text: 'Hold the altar with 3 great ones to complete the ritual.',
                            alignment_enum: 1, size_enum: 0, r: 200, g: 200, b: 200, a: 255 }
-  args.outputs.labels << { x: 640, y: 270, text: '[ E ] Stomp — blasts shoggoths back',
+  args.outputs.labels << { x: 640, y: 270, text: '[ E ] Stomp — blasts shoggoths and hunters back',
                            alignment_enum: 1, size_enum: 0, r: 180, g: 160, b: 200, a: 255 }
-  args.outputs.labels << { x: 640, y: 245, text: 'Stay calm. Stay away from them. Your sanity will not hold forever.',
+  args.outputs.labels << { x: 640, y: 245, text: 'Inquisitors will hunt your idols. Stay calm. Your sanity will not hold forever.',
                            alignment_enum: 1, size_enum: 0, r: 160, g: 100, b: 140, a: 255 }
   args.outputs.labels << { x: 640, y: 170, text: 'press any key to begin',
                            alignment_enum: 1, size_enum: 0, r: 120, g: 120, b: 140, a: (Math.sin(Kernel.tick_count * 0.06) * 80 + 170).to_i }
@@ -361,9 +386,96 @@ def win_screen(args)
   true
 end
 
+def emit_particles(args, x, y, count, r:, g:, b:, speed: 2.0, size: 5)
+  count.times do
+    angle = rand * Math::PI * 2
+    spd   = speed * (0.5 + rand * 0.8)
+    args.state.particles << {
+      x: x, y: y, w: size, h: size,
+      dx: Math.cos(angle) * spd, dy: Math.sin(angle) * spd,
+      a: 255, path: :solid, r: r, g: g, b: b, blendmode_enum: 1
+    }
+  end
+end
+
+def tick_particles(args)
+  args.state.particles.each do |p|
+    p[:x] += p[:dx]; p[:y] += p[:dy]
+    p[:dx] *= 0.93; p[:dy] *= 0.93
+    p[:a]  -= 7
+  end
+  args.state.particles.reject! { |p| p[:a] <= 0 }
+  args.state.merge_flash = [(args.state.merge_flash || 0) - 1, 0].max
+end
+
+def check_infighting(args)
+  eaten = []
+  args.state.boids.each do |predator|
+    next if predator.tier < 3
+    eat_r = predator.collision_r - 4
+    args.state.boids.each do |prey|
+      next if prey.tier == 3 || eaten.include?(prey)
+      dx = predator.x - prey.x; dy = predator.y - prey.y
+      next unless dx * dx + dy * dy < eat_r * eat_r
+      eaten << prey
+      emit_particles(args, prey.x, prey.y, 8, r: 80, g: 210, b: 80, speed: 1.5, size: 4)
+    end
+  end
+  args.state.boids -= eaten unless eaten.empty?
+end
+
+def tick_hunters(args)
+  player = args.state.player
+  args.state.hunter_timer += 1
+  if args.state.hunter_timer >= HUNTER_SPAWN_INTERVAL && args.state.hunters.length < MAX_HUNTERS
+    args.state.hunter_timer = 0
+    spawn_hunter(args)
+  end
+
+  placed_idols = args.state.idols.select { |i| i[:placed] }
+
+  args.state.hunters.each do |h|
+    target = placed_idols.empty? ? { x: player.x, y: player.y } :
+             placed_idols.min_by { |i| (i[:x] - h.x)**2 + (i[:y] - h.y)**2 }
+    h.update(target[:x], target[:y], args.state.cave_grid)
+    h.x, h.y = resolve_prop_collisions(h.x, h.y, Hunter::RADIUS, args.state.prop_colliders)
+
+    args.state.idols.each do |idol|
+      next unless idol[:placed]
+      dx = h.x - idol[:x]; dy = h.y - idol[:y]
+      next unless dx * dx + dy * dy < (Hunter::RADIUS + 14)**2
+      idol[:placed] = false
+      player.idols_held += 1
+      emit_particles(args, idol[:x], idol[:y], 14, r: 255, g: 100, b: 20, speed: 2.5, size: 5)
+    end
+
+    dx = h.x - player.x; dy = h.y - player.y
+    player.take_hit if dx * dx + dy * dy < (Hunter::RADIUS + player.radius)**2
+  end
+
+  args.state.hunters.reject!(&:dead?)
+end
+
+def spawn_hunter(args)
+  player = args.state.player
+  far = args.state.floor_cells.select do |c, r|
+    px = c * Cave::TILE_SIZE + Cave::TILE_SIZE / 2
+    py = r * Cave::TILE_SIZE + Cave::TILE_SIZE / 2
+    (px - player.x)**2 + (py - player.y)**2 > 300**2
+  end
+  col, row = (far.empty? ? args.state.floor_cells : far).sample
+  return unless col
+  args.state.hunters << Hunter.new(
+    x: col * Cave::TILE_SIZE + Cave::TILE_SIZE / 2,
+    y: row * Cave::TILE_SIZE + Cave::TILE_SIZE / 2
+  )
+end
+
 def render_base(args)
   args.outputs.sprites << args.state.bg_sprites
+  args.outputs.sprites << args.state.particles
   args.outputs.sprites << args.state.boids.map { |b| b.render(Kernel.tick_count) }
+  args.outputs.sprites << args.state.hunters.map(&:render)
 end
 
 def render(args)
@@ -371,8 +483,16 @@ def render(args)
   render_altar(args)
   render_idols(args)
 
+  args.outputs.sprites << args.state.particles
   args.outputs.sprites << args.state.boids.map { |b| b.render(Kernel.tick_count) }
+  args.outputs.sprites << args.state.hunters.map(&:render)
   args.outputs.sprites << args.state.player.render(Kernel.tick_count, sanity_pct: args.state.player.sanity_pct)
+
+  # Merge flash
+  if (args.state.merge_flash || 0) > 0
+    a = (args.state.merge_flash * 25).clamp(0, 120)
+    args.outputs.sprites << { x: 0, y: 0, w: 1280, h: 720, path: :solid, r: 160, g: 255, b: 180, a: a }
+  end
 
   render_hud(args)
 end
@@ -427,11 +547,12 @@ def render_hud(args)
   counts = [0, 0, 0]
   args.state.boids.each { |b| counts[b.tier - 1] += 1 }
 
+  hunter_str = args.state.hunters.length > 0 ? "  Hunters: #{args.state.hunters.length}" : ''
   args.outputs.labels << {
     x: 10, y: 710,
     text: "Idols: #{player.idols_held}  HP: #{player.hp}  " \
-          "Small: #{counts[0]}  Medium: #{counts[1]}  Large: #{counts[2]}  " \
-          "FPS: #{args.gtk.current_framerate.to_i}",
+          "Small: #{counts[0]}  Medium: #{counts[1]}  Large: #{counts[2]}" \
+          "#{hunter_str}  FPS: #{args.gtk.current_framerate.to_i}",
     r: 255, g: 255, b: 255, a: 255
   }
 
