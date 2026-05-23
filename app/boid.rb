@@ -1,266 +1,264 @@
 class Boid
+  TIER_SCALE = { 1 => 0.3, 2 => 0.85, 3 => 1.3 }.freeze
+  TIER_R     = { 1 => 9,   2 => 22,   3 => 34  }.freeze
+
   attr_accessor :x, :y, :vx, :vy,
                 :bias_x, :bias_y,
                 :wander_angle,
                 :speed_mult,
                 :speed_target,
                 :impulse_cooldown,
-                :personality
+                :personality,
+                :tier
 
-  def initialize(x:, y:, vx:, vy:, bias_x:, bias_y:, animator:, personality:)
-    @x = x
-    @y = y
-    @vx = vx
-    @vy = vy
-    @bias_x = bias_x
-    @bias_y = bias_y
-    @wander_angle = rand * Math::PI * 2
-    @speed_mult = 1.0
-    @speed_target = 1.0
+  def initialize(x:, y:, vx:, vy:, bias_x:, bias_y:, animator:, personality:, tier: 1)
+    @x = x.to_f; @y = y.to_f
+    @vx = vx.to_f; @vy = vy.to_f
+    @bias_x = bias_x.to_f; @bias_y = bias_y.to_f
+    @wander_angle    = rand * Math::PI * 2
+    @speed_mult      = 1.0
+    @speed_target    = 1.0
     @impulse_cooldown = rand(120)
-    @personality = personality
-    @animator = animator
+    @personality     = personality
+    @animator        = animator
+    @tier            = tier
   end
 
-  def render(tick_count, scale:)
-    s = @animator.sprite(tick_count, anchor_x: @x, anchor_y: @y, scale: scale)
+  def collision_r
+    TIER_R[@tier]
+  end
+
+  def render(tick_count)
+    s = @animator.sprite(tick_count, anchor_x: @x, anchor_y: @y, scale: TIER_SCALE[@tier])
     s[:flip_horizontally] = @vx < 0
     s
   end
 end
 
 module Flock
-  WORLD_W = 1280
-  WORLD_H = 720
-
-  PERCEPTION   = 55.0   # tight: boid only sees close neighbors -> multiple sub-flocks
+  PERCEPTION   = 55.0
   SEPARATION_R = 22.0
-  MAX_SPEED    = 0.9    # walking pace
+  MAX_SPEED    = 0.9
   MIN_SPEED    = 0.3
   MAX_FORCE    = 0.025
 
   W_SEP    = 1.8
-  W_ALIGN  = 0.55       # weak: groups don't all converge to same heading
-  W_COH    = 0.45       # weak: loose local clumping
-  W_WANDER = 0.030      # magnitude of smooth-wander force
-  W_BIAS   = 0.012      # persistent per-boid heading -> groups drift in different directions
+  W_ALIGN  = 0.55
+  W_COH    = 0.45
+  W_WANDER = 0.030
+  W_BIAS   = 0.012
 
-  WANDER_ANGLE_STEP = 0.35    # how fast wander_angle random-walks (radians/tick stddev)
-  BIAS_ANGLE_STEP   = 0.04    # how fast bias_angle drifts
-  SPEED_TARGET_STEP = 0.012   # how fast speed_mult target drifts
-  SPEED_MULT_MIN    = 0.35    # creature can slow this much (loitering)
-  SPEED_MULT_MAX    = 1.15    # or briefly burst
-  IMPULSE_CHANCE    = 0.006   # ~1 per ~167 ticks per boid: sudden direction kick
-  IMPULSE_FORCE     = 0.12
+  WANDER_ANGLE_STEP    = 0.35
+  BIAS_ANGLE_STEP      = 0.04
+  SPEED_TARGET_STEP    = 0.012
+  SPEED_MULT_MIN       = 0.35
+  SPEED_MULT_MAX       = 1.15
+  IMPULSE_CHANCE       = 0.006
+  IMPULSE_FORCE        = 0.12
   IMPULSE_MIN_COOLDOWN = 90
 
-  # Hard collision: creatures cannot physically overlap. Circle radius in world units.
-  # Matches roughly the rendered footprint (bbox ~120 * scale 0.5 / 2 ~= 30, but tighter
-  # feels right since visible mass is smaller than bbox).
-  COLLISION_R     = 14.0
-  COLLISION_R_SQ  = COLLISION_R * COLLISION_R * 4   # (2r)^2
-  COLLISION_DAMP  = 0.5   # velocity component along collision normal absorbed
+  COLLISION_DAMP       = 0.5
 
-  def self.spawn(count, animator_factory)
+  IDOL_ATTRACT_RADIUS_SQ = 400 * 400
+
+  def self.spawn(count, animator_factory, cave_grid:)
+    cells = Cave.floor_cells(cave_grid)
+    # Fallback if cave generation produced no floor cells
+    if cells.empty?
+      cells = (1..Cave::ROWS - 2).flat_map { |r| (1..Cave::COLS - 2).map { |c| [c, r] } }
+    end
     Array.new(count) do
-      angle = rand * Math::PI * 2
-      speed = MIN_SPEED + rand * (MAX_SPEED - MIN_SPEED)
+      angle      = rand * Math::PI * 2
+      speed      = MIN_SPEED + rand * (MAX_SPEED - MIN_SPEED)
       bias_angle = rand * Math::PI * 2
-      # per-boid personality: subtle individual variation so no two creatures
-      # behave identically -> emergent natural-looking heterogeneity
+      col, row   = cells.sample
+      x = col * Cave::TILE_SIZE + Cave::TILE_SIZE / 2 + (rand - 0.5) * Cave::TILE_SIZE * 0.4
+      y = row * Cave::TILE_SIZE + Cave::TILE_SIZE / 2 + (rand - 0.5) * Cave::TILE_SIZE * 0.4
       personality = {
-        speed_scale:  0.75 + rand * 0.5,    # 0.75..1.25
-        wander_scale: 0.6 + rand * 0.8,     # 0.6..1.4
-        bias_scale:   0.5 + rand * 1.0      # some boids more wilful, some more drifty
+        speed_scale:  0.75 + rand * 0.5,
+        wander_scale: 0.6  + rand * 0.8,
+        bias_scale:   0.5  + rand * 1.0
       }
       Boid.new(
-        x: rand * WORLD_W,
-        y: rand * WORLD_H,
+        x: x, y: y,
         vx: Math.cos(angle) * speed,
         vy: Math.sin(angle) * speed,
         bias_x: Math.cos(bias_angle),
         bias_y: Math.sin(bias_angle),
         animator: animator_factory.call,
-        personality: personality
+        personality: personality,
+        tier: 1
       )
     end
   end
 
-  def self.step(boids)
+  def self.step(boids, cave_grid:, idols:, altar_x:, altar_y:)
     perception_sq = PERCEPTION * PERCEPTION
-    sep_sq = SEPARATION_R * SEPARATION_R
+    sep_sq        = SEPARATION_R * SEPARATION_R
 
     accelerations = Array.new(boids.length) { [0.0, 0.0] }
 
     boids.each_with_index do |b, i|
-      sep_x = 0.0
-      sep_y = 0.0
-      ali_x = 0.0
-      ali_y = 0.0
-      coh_x = 0.0
-      coh_y = 0.0
-      n_neighbors = 0
-      n_sep = 0
+      sep_x = sep_y = ali_x = ali_y = coh_x = coh_y = 0.0
+      n_neighbors = n_sep = 0
 
       boids.each_with_index do |o, j|
         next if i == j
-
-        dx = o.x - b.x
-        dy = o.y - b.y
-        # toroidal wrap distance
-        dx -= WORLD_W if dx >  WORLD_W * 0.5
-        dx += WORLD_W if dx < -WORLD_W * 0.5
-        dy -= WORLD_H if dy >  WORLD_H * 0.5
-        dy += WORLD_H if dy < -WORLD_H * 0.5
+        dx = o.x - b.x; dy = o.y - b.y
         d2 = dx * dx + dy * dy
         next if d2 > perception_sq || d2 < 0.0001
-
         n_neighbors += 1
-        ali_x += o.vx
-        ali_y += o.vy
-        coh_x += b.x + dx
-        coh_y += b.y + dy
-
-        next unless d2 < sep_sq
-
-        # inverse-square falloff: gentle at sep_sq edge, strong when very close.
-        # allows natural overlap at medium range, hard push only when crowding.
-        sep_x -= dx / d2
-        sep_y -= dy / d2
-        n_sep += 1
+        ali_x += o.vx; ali_y += o.vy
+        coh_x += b.x + dx; coh_y += b.y + dy
+        if d2 < sep_sq
+          sep_x -= dx / d2; sep_y -= dy / d2
+          n_sep += 1
+        end
       end
 
-      ax = 0.0
-      ay = 0.0
+      ax = ay = 0.0
 
       if n_neighbors > 0
-        ali_x /= n_neighbors
-        ali_y /= n_neighbors
-        ali_x, ali_y = steer_to(ali_x, ali_y, b.vx, b.vy)
-        ax += ali_x * W_ALIGN
-        ay += ali_y * W_ALIGN
-
-        coh_x /= n_neighbors
-        coh_y /= n_neighbors
-        desired_x = coh_x - b.x
-        desired_y = coh_y - b.y
-        coh_sx, coh_sy = steer_to(desired_x, desired_y, b.vx, b.vy)
-        ax += coh_sx * W_COH
-        ay += coh_sy * W_COH
+        ali_x /= n_neighbors; ali_y /= n_neighbors
+        sx, sy = steer_to(ali_x, ali_y, b.vx, b.vy)
+        ax += sx * W_ALIGN; ay += sy * W_ALIGN
+        coh_x /= n_neighbors; coh_y /= n_neighbors
+        sx, sy = steer_to(coh_x - b.x, coh_y - b.y, b.vx, b.vy)
+        ax += sx * W_COH; ay += sy * W_COH
       end
 
       if n_sep > 0
-        sep_x /= n_sep
-        sep_y /= n_sep
-        sep_sx, sep_sy = steer_to(sep_x, sep_y, b.vx, b.vy)
-        ax += sep_sx * W_SEP
-        ay += sep_sy * W_SEP
+        sep_x /= n_sep; sep_y /= n_sep
+        sx, sy = steer_to(sep_x, sep_y, b.vx, b.vy)
+        ax += sx * W_SEP; ay += sy * W_SEP
       end
 
-      # smooth wander: wander_angle random-walks each tick. Force applied in that
-      # direction. Result is a slowly-curving meander instead of jittery noise.
+      # Find nearest placed idol (tier 1+2) or use altar (tier 3)
+      near_idol = false
+      if b.tier == 3
+        best_dx = altar_x - b.x; best_dy = altar_y - b.y
+        best_d2 = best_dx * best_dx + best_dy * best_dy
+        near_idol = best_d2 < Cave::ALTAR_RADIUS * Cave::ALTAR_RADIUS
+      else
+        best_d2 = Float::INFINITY
+        best_dx = best_dy = 0.0
+        idols.each do |idol|
+          next unless idol[:placed]
+          dx = idol[:x] - b.x; dy = idol[:y] - b.y
+          d2 = dx * dx + dy * dy
+          if d2 < best_d2
+            best_d2 = d2; best_dx = dx; best_dy = dy
+          end
+        end
+        near_idol = best_d2 < Cave::MERGE_RADIUS * Cave::MERGE_RADIUS
+      end
+
+      # Suppress autonomous behavior when locked onto target
+      wander_scale = near_idol ? 0.05 : 1.0
+      impulse_ok   = !near_idol
+
       b.wander_angle += (rand - 0.5) * WANDER_ANGLE_STEP
-      w_force = W_WANDER * b.personality[:wander_scale]
-      ax += Math.cos(b.wander_angle) * w_force
-      ay += Math.sin(b.wander_angle) * w_force
+      ax += Math.cos(b.wander_angle) * W_WANDER * b.personality[:wander_scale] * wander_scale
+      ay += Math.sin(b.wander_angle) * W_WANDER * b.personality[:wander_scale] * wander_scale
 
-      # persistent per-boid bias: each boid has its own preferred heading.
-      # neighbors with similar bias drift together; differing biases peel sub-flocks apart.
-      bias_f = W_BIAS * b.personality[:bias_scale]
-      ax += b.bias_x * bias_f
-      ay += b.bias_y * bias_f
-
-      # slowly rotate the bias so flocks don't run forever in a straight line
+      bias_f = W_BIAS * b.personality[:bias_scale] * wander_scale
+      ax += b.bias_x * bias_f; ay += b.bias_y * bias_f
       ba = Math.atan2(b.bias_y, b.bias_x) + (rand - 0.5) * BIAS_ANGLE_STEP
-      b.bias_x = Math.cos(ba)
-      b.bias_y = Math.sin(ba)
+      b.bias_x = Math.cos(ba); b.bias_y = Math.sin(ba)
 
-      # impulse: rare sudden direction kick (startle, curiosity, distraction).
-      # Cooldown prevents back-to-back kicks on same boid.
       if b.impulse_cooldown > 0
         b.impulse_cooldown -= 1
-      elsif rand < IMPULSE_CHANCE
+      elsif impulse_ok && rand < IMPULSE_CHANCE
         ia = rand * Math::PI * 2
         ax += Math.cos(ia) * IMPULSE_FORCE
         ay += Math.sin(ia) * IMPULSE_FORCE
-        # nudge the wander_angle too so the meander continues in roughly the new direction
         b.wander_angle = ia
         b.impulse_cooldown = IMPULSE_MIN_COOLDOWN + rand(180)
       end
 
-      # speed throttle: each boid has a slowly-drifting target speed multiplier.
-      # Creates the loitering / hurrying mix you see in real flocks.
       b.speed_target += (rand - 0.5) * SPEED_TARGET_STEP
-      b.speed_target = b.speed_target.clamp(SPEED_MULT_MIN, SPEED_MULT_MAX)
-      b.speed_mult += (b.speed_target - b.speed_mult) * 0.05  # smooth toward target
+      b.speed_target  = b.speed_target.clamp(SPEED_MULT_MIN, SPEED_MULT_MAX)
+      b.speed_mult   += (b.speed_target - b.speed_mult) * 0.05
 
-      accelerations[i][0] = ax
-      accelerations[i][1] = ay
+      # Seek target — strong pull when close, moderate pull when far
+      if b.tier == 3 || best_d2 < IDOL_ATTRACT_RADIUS_SQ
+        sx, sy = steer_to(best_dx, best_dy, b.vx, b.vy)
+        weight = near_idol ? 5.0 : (0.6 * (1.0 - Math.sqrt(best_d2) / Math.sqrt(IDOL_ATTRACT_RADIUS_SQ)))
+        ax += sx * weight; ay += sy * weight
+      end
+
+      accelerations[i] = [ax, ay]
     end
 
     boids.each_with_index do |b, i|
       b.vx += accelerations[i][0]
       b.vy += accelerations[i][1]
 
-      # per-boid effective speed range = global range * personality * current throttle
       effective_max = MAX_SPEED * b.personality[:speed_scale] * b.speed_mult
       effective_min = MIN_SPEED * b.personality[:speed_scale] * b.speed_mult
-
       sp = Math.sqrt(b.vx * b.vx + b.vy * b.vy)
       if sp > effective_max
-        b.vx = b.vx / sp * effective_max
-        b.vy = b.vy / sp * effective_max
+        b.vx = b.vx / sp * effective_max; b.vy = b.vy / sp * effective_max
       elsif sp < effective_min && sp > 0.0001
-        b.vx = b.vx / sp * effective_min
-        b.vy = b.vy / sp * effective_min
+        b.vx = b.vx / sp * effective_min; b.vy = b.vy / sp * effective_min
       end
-      b.x = (b.x + b.vx) % WORLD_W
-      b.y = (b.y + b.vy) % WORLD_H
+
+      b.x += b.vx
+      b.y += b.vy
+
+      resolve_wall_collision(b, cave_grid)
     end
 
     resolve_collisions(boids)
   end
 
-  # Hard pairwise collision resolution. Treat each boid as a circle of COLLISION_R.
-  # On overlap: push apart by half the penetration each, and damp velocity along
-  # the collision normal so they don't bounce wildly.
-  def self.resolve_collisions(boids)
-    min_d = COLLISION_R * 2
+  def self.resolve_wall_collision(b, cave_grid)
+    r = b.collision_r.to_f
 
+    if Cave.wall_at_px?(cave_grid, (b.x + r).to_i, b.y.to_i) && b.vx > 0
+      b.vx = -b.vx.abs * 0.3
+      b.x  = (b.x + r).idiv(Cave::TILE_SIZE) * Cave::TILE_SIZE - r - 0.5
+    end
+    if Cave.wall_at_px?(cave_grid, (b.x - r).to_i, b.y.to_i) && b.vx < 0
+      b.vx = b.vx.abs * 0.3
+      b.x  = ((b.x - r).idiv(Cave::TILE_SIZE) + 1) * Cave::TILE_SIZE + r + 0.5
+    end
+    if Cave.wall_at_px?(cave_grid, b.x.to_i, (b.y + r).to_i) && b.vy > 0
+      b.vy = -b.vy.abs * 0.3
+      b.y  = (b.y + r).idiv(Cave::TILE_SIZE) * Cave::TILE_SIZE - r - 0.5
+    end
+    if Cave.wall_at_px?(cave_grid, b.x.to_i, (b.y - r).to_i) && b.vy < 0
+      b.vy = b.vy.abs * 0.3
+      b.y  = ((b.y - r).idiv(Cave::TILE_SIZE) + 1) * Cave::TILE_SIZE + r + 0.5
+    end
+
+    b.x = b.x.clamp(r, 1280.0 - r)
+    b.y = b.y.clamp(r, 720.0  - r)
+  end
+
+  def self.resolve_collisions(boids)
     boids.each_with_index do |a, i|
       ((i + 1)...boids.length).each do |j|
-        b = boids[j]
-        dx = b.x - a.x
-        dy = b.y - a.y
-        # toroidal wrap
-        dx -= WORLD_W if dx >  WORLD_W * 0.5
-        dx += WORLD_W if dx < -WORLD_W * 0.5
-        dy -= WORLD_H if dy >  WORLD_H * 0.5
-        dy += WORLD_H if dy < -WORLD_H * 0.5
-        d2 = dx * dx + dy * dy
-        next if d2 >= COLLISION_R_SQ || d2 < 0.0001
+        b     = boids[j]
+        min_d = a.collision_r + b.collision_r
+        dx    = b.x - a.x; dy = b.y - a.y
+        d2    = dx * dx + dy * dy
+        next if d2 >= min_d * min_d || d2 < 0.0001
 
         d  = Math.sqrt(d2)
-        overlap = min_d - d
-        nx = dx / d
-        ny = dy / d
-        push = overlap * 0.5
+        nx = dx / d; ny = dy / d
+        push = (min_d - d) * 0.5
 
-        a.x = (a.x - nx * push) % WORLD_W
-        a.y = (a.y - ny * push) % WORLD_H
-        b.x = (b.x + nx * push) % WORLD_W
-        b.y = (b.y + ny * push) % WORLD_H
+        a.x -= nx * push; a.y -= ny * push
+        b.x += nx * push; b.y += ny * push
 
-        # damp velocity along collision normal so they don't keep ramming
         va_n = a.vx * nx + a.vy * ny
         vb_n = b.vx * nx + b.vy * ny
         if va_n > 0
-          a.vx -= nx * va_n * COLLISION_DAMP
-          a.vy -= ny * va_n * COLLISION_DAMP
+          a.vx -= nx * va_n * COLLISION_DAMP; a.vy -= ny * va_n * COLLISION_DAMP
         end
         if vb_n < 0
-          b.vx -= nx * vb_n * COLLISION_DAMP
-          b.vy -= ny * vb_n * COLLISION_DAMP
+          b.vx -= nx * vb_n * COLLISION_DAMP; b.vy -= ny * vb_n * COLLISION_DAMP
         end
       end
     end
@@ -269,15 +267,11 @@ module Flock
   def self.steer_to(dx, dy, vx, vy)
     mag = Math.sqrt(dx * dx + dy * dy)
     return [0.0, 0.0] if mag < 0.0001
-
-    dxn = dx / mag * MAX_SPEED
-    dyn = dy / mag * MAX_SPEED
-    sx = dxn - vx
-    sy = dyn - vy
+    dxn = dx / mag * MAX_SPEED; dyn = dy / mag * MAX_SPEED
+    sx  = dxn - vx; sy  = dyn - vy
     smag = Math.sqrt(sx * sx + sy * sy)
     if smag > MAX_FORCE
-      sx = sx / smag * MAX_FORCE
-      sy = sy / smag * MAX_FORCE
+      sx = sx / smag * MAX_FORCE; sy = sy / smag * MAX_FORCE
     end
     [sx, sy]
   end

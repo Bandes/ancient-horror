@@ -45,6 +45,16 @@ class SpriteAnimator
   end
 end
 
+module WalkFrames
+  # Exact content bbox per frame (36x50 px, trimmed from 140x140 cells).
+  # tile_x = frame_index * 140 + x_offset_within_cell
+  X_OFFSETS = [58, 59, 58, 57, 56, 54, 55, 57].freeze
+  W = 36; H = 50
+  ALL = 8.times.map { |i|
+    { x: i * 140 + X_OFFSETS[i], y: 47, w: W, h: H, cx_off: W / 2, cy_off: H / 2 }
+  }.freeze
+end
+
 module CreatureFrames
   # Exact bounding boxes extracted from sprites/creature.png via
   # ImageMagick connected-components on alpha channel.
