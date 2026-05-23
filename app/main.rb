@@ -546,8 +546,8 @@ def render(args)
   render_hud(args)
 end
 
-ALTAR_SPRITE_W = 45
-ALTAR_SPRITE_H = 48
+ALTAR_SPRITE_W = 80
+ALTAR_SPRITE_H = 80
 
 def render_altar(args)
   ax = args.state.altar_x
