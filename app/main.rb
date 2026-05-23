@@ -9,8 +9,8 @@ LARGE_FOR_WIN         = 3
 MAX_SHOGGOTHS         = 120
 SPAWN_INTERVAL        = 360   # new shoggoth every 6 seconds
 SUMMON_TICKS_NEEDED   = 300   # hold altar 5 seconds to win
-HUNTER_SPAWN_INTERVAL = 600   # new hunter every 10 seconds
-MAX_HUNTERS           = 5
+HUNTER_SPAWN_INTERVAL = 1800  # new hunter every 30 seconds
+MAX_HUNTERS           = 3
 
 def boot(args)
   args.state = {}
@@ -48,6 +48,15 @@ def defaults(args)
       frames: CreatureFrames::ALL,
       frame_duration: Numeric.rand(4..7),
       start_tick: -rand(60)
+    )
+  }
+
+  args.state.hunter_animator_factory = lambda {
+    SpriteAnimator.new(
+      path: 'sprites/hunter-run.png',
+      frames: HunterFrames::ALL,
+      frame_duration: 5,
+      start_tick: -rand(40)
     )
   }
 
@@ -422,6 +431,16 @@ def check_infighting(args)
     end
   end
   args.state.boids -= eaten unless eaten.empty?
+
+  args.state.hunters.reject! do |h|
+    args.state.boids.any? do |b|
+      dx = b.x - h.x; dy = b.y - h.y
+      eat_r = b.collision_r + Hunter::RADIUS - 6
+      next unless dx * dx + dy * dy < eat_r * eat_r
+      emit_particles(args, h.x, h.y, 10, r: 200, g: 20, b: 20, speed: 2.0, size: 5)
+      true
+    end
+  end
 end
 
 def tick_hunters(args)
@@ -467,15 +486,16 @@ def spawn_hunter(args)
   return unless col
   args.state.hunters << Hunter.new(
     x: col * Cave::TILE_SIZE + Cave::TILE_SIZE / 2,
-    y: row * Cave::TILE_SIZE + Cave::TILE_SIZE / 2
+    y: row * Cave::TILE_SIZE + Cave::TILE_SIZE / 2,
+    animator: args.state.hunter_animator_factory.call
   )
 end
 
 def render_base(args)
   args.outputs.sprites << args.state.bg_sprites
-  args.outputs.sprites << args.state.particles
-  args.outputs.sprites << args.state.boids.map { |b| b.render(Kernel.tick_count) }
-  args.outputs.sprites << args.state.hunters.map(&:render)
+  args.outputs.sprites << (args.state.particles || [])
+  args.outputs.sprites << (args.state.boids || []).map { |b| b.render(Kernel.tick_count) }
+  args.outputs.sprites << (args.state.hunters || []).map { |h| h.render(Kernel.tick_count) }
 end
 
 def render(args)
@@ -483,9 +503,9 @@ def render(args)
   render_altar(args)
   render_idols(args)
 
-  args.outputs.sprites << args.state.particles
-  args.outputs.sprites << args.state.boids.map { |b| b.render(Kernel.tick_count) }
-  args.outputs.sprites << args.state.hunters.map(&:render)
+  args.outputs.sprites << (args.state.particles || [])
+  args.outputs.sprites << (args.state.boids || []).map { |b| b.render(Kernel.tick_count) }
+  args.outputs.sprites << (args.state.hunters || []).map { |h| h.render(Kernel.tick_count) }
   args.outputs.sprites << args.state.player.render(Kernel.tick_count, sanity_pct: args.state.player.sanity_pct)
 
   # Merge flash

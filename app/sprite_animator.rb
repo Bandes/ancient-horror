@@ -55,6 +55,21 @@ module WalkFrames
   }.freeze
 end
 
+module HunterFrames
+  # hunter-run.png: 1200x150, 8 frames each 150x150, top-left origin.
+  # Content bounds measured per frame; cx_off/cy_off = visual center within bbox.
+  ALL = [
+    { x:   61, y: 58, w: 25, h: 37, cx_off: 12.5, cy_off: 18.5 },
+    { x:  206, y: 57, w: 33, h: 34, cx_off: 16.5, cy_off: 17.0 },
+    { x:  360, y: 57, w: 25, h: 34, cx_off: 12.5, cy_off: 17.0 },
+    { x:  514, y: 58, w: 18, h: 37, cx_off:  9.0, cy_off: 18.5 },
+    { x:  659, y: 59, w: 25, h: 36, cx_off: 12.5, cy_off: 18.0 },
+    { x:  806, y: 58, w: 34, h: 29, cx_off: 17.0, cy_off: 14.5 },
+    { x:  959, y: 58, w: 27, h: 35, cx_off: 13.5, cy_off: 17.5 },
+    { x: 1113, y: 59, w: 18, h: 36, cx_off:  9.0, cy_off: 18.0 },
+  ].freeze
+end
+
 module CreatureFrames
   # Exact bounding boxes extracted from sprites/creature.png via
   # ImageMagick connected-components on alpha channel.

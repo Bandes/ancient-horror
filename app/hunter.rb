@@ -4,16 +4,18 @@ class Hunter
   TURN_SPEED = 0.07
   HP         = 3
   HIT_CD     = 40
+  SCALE      = 2.0
 
   attr_accessor :x, :y, :vx, :vy, :hp, :hit_timer
 
-  def initialize(x:, y:)
+  def initialize(x:, y:, animator:)
     @x = x.to_f; @y = y.to_f
     angle = rand * Math::PI * 2
     @vx = Math.cos(angle) * SPEED
     @vy = Math.sin(angle) * SPEED
     @hp = HP
     @hit_timer = 0
+    @animator = animator
   end
 
   def dead?
@@ -52,19 +54,17 @@ class Hunter
     @hit_timer -= 1 if @hit_timer > 0
   end
 
-  def render
+  def render(tick_count)
     flash = @hit_timer > 0 && (@hit_timer % 6 < 3)
-    a = flash ? 80 : 220
-    sz = RADIUS * 2
-    [
-      { x: @x - sz / 2, y: @y - sz / 2, w: sz, h: sz,
-        path: :solid, r: 200, g: 20, b: 20, a: a },
-      # Health pips above
-      HP.times.map do |i|
-        filled = i < @hp
-        { x: @x - HP * 4 + i * 8, y: @y + sz / 2 + 3, w: 6, h: 4,
-          path: :solid, r: filled ? 220 : 60, g: filled ? 40 : 40, b: filled ? 40 : 50, a: 200 }
-      end
-    ].flatten
+    sprite = @animator.sprite(tick_count, anchor_x: @x, anchor_y: @y, scale: SCALE)
+    sprite[:flip_horizontally] = @vx < 0
+    sprite[:a] = flash ? 80 : 255
+    pip_y = @y + HunterFrames::ALL.map { |f| f[:h] }.max * SCALE / 2 + 4
+    pips = HP.times.map do |i|
+      filled = i < @hp
+      { x: @x - HP * 4 + i * 8, y: pip_y, w: 6, h: 4,
+        path: :solid, r: filled ? 220 : 60, g: filled ? 40 : 40, b: filled ? 40 : 50, a: 200 }
+    end
+    [sprite] + pips
   end
 end
