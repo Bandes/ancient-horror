@@ -546,34 +546,46 @@ def render(args)
   render_hud(args)
 end
 
+ALTAR_SPRITE_W = 45
+ALTAR_SPRITE_H = 48
+
 def render_altar(args)
   ax = args.state.altar_x
   ay = args.state.altar_y
   stage = args.state.ritual_stage
   pulse = (Math.sin(Kernel.tick_count * 0.08) * 0.5 + 0.5)
 
-  # Altar glow intensifies with ritual stage
-  base_r = 80 + stage * 40
-  base_g = 30 + stage * 10
-  base_b = 180 + stage * 20
-  glow_a = (120 + stage * 30 + pulse * 30).to_i.clamp(0, 255)
-
-  size = 44 + stage * 6 + (pulse * 4).to_i
+  # Glow behind the sprite, intensifies with ritual stage
+  base_r = 60 + stage * 40
+  base_g = 20 + stage * 10
+  base_b = 160 + stage * 25
+  glow_a = (80 + stage * 35 + pulse * 40).to_i.clamp(0, 255)
+  glow_size = (ALTAR_SPRITE_W * 1.6 + stage * 8 + pulse * 6).to_i
   args.outputs.sprites << {
-    x: ax - size / 2, y: ay - size / 2, w: size, h: size,
+    x: ax - glow_size / 2, y: ay - glow_size / 2, w: glow_size, h: glow_size,
     path: :solid, r: base_r, g: base_g, b: base_b, a: glow_a
   }
 
-  # Summoning progress arc (bar above altar)
+  # Altar sprite — tinted green as ritual advances
+  tint_g = (180 + stage * 25).clamp(0, 255)
+  args.outputs.sprites << {
+    x: ax - ALTAR_SPRITE_W / 2, y: ay - ALTAR_SPRITE_H / 2,
+    w: ALTAR_SPRITE_W, h: ALTAR_SPRITE_H,
+    path: 'sprites/altar.png',
+    r: 255, g: tint_g, b: 255, a: 255, blendmode_enum: 1
+  }
+
+  # Summoning progress bar above altar
   return unless args.state.summon_ticks > 0
 
   pct   = args.state.summon_ticks.to_f / SUMMON_TICKS_NEEDED
   bar_w = 80
-  args.outputs.sprites << { x: ax - bar_w / 2, y: ay + 30, w: bar_w, h: 6,
+  bar_y = ay + ALTAR_SPRITE_H / 2 + 6
+  args.outputs.sprites << { x: ax - bar_w / 2, y: bar_y, w: bar_w, h: 6,
                             path: :solid, r: 40, g: 40, b: 40, a: 200 }
-  args.outputs.sprites << { x: ax - bar_w / 2, y: ay + 30, w: (bar_w * pct).to_i, h: 6,
+  args.outputs.sprites << { x: ax - bar_w / 2, y: bar_y, w: (bar_w * pct).to_i, h: 6,
                             path: :solid, r: 180, g: 80, b: 255, a: 255 }
-  args.outputs.labels << { x: ax, y: ay + 46, text: 'HOLD!',
+  args.outputs.labels << { x: ax, y: bar_y + 16, text: 'HOLD!',
                            alignment_enum: 1, size_enum: -2, r: 220, g: 150, b: 255, a: 255 }
 end
 
