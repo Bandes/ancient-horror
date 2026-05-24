@@ -3,6 +3,7 @@ require 'app/cave'
 require 'app/boid'
 require 'app/player'
 require 'app/hunter'
+require 'app/sound'
 
 CREATURE_COUNT        = 50
 LARGE_FOR_WIN         = 2
@@ -18,6 +19,7 @@ end
 
 def tick(args)
   defaults(args)
+  args.state.sound.tick(args)
   return if intro_screen(args)
   return if game_over_screen(args) || win_screen(args)
 
@@ -83,6 +85,7 @@ def defaults(args)
   props = Cave.generate_props(args.state.cave_grid, exclude)
   args.state.prop_colliders = props.map { |p| { cx: p[:cx], cy: p[:cy], cr: p[:cr] } }
   args.state.bg_sprites = Cave.render(args.state.cave_grid) + props.map { |p| p[:sprite] }
+  args.state.sound         = Sound.new(args.gtk)
   args.state.intro         = true
   args.state.start_tick    = nil
   args.state.initialized   = true
@@ -122,6 +125,7 @@ def handle_input(args)
 
     idol[:placed] = false
     player.idols_held += 1
+    args.state.sound.play(args, :idol_pickup)
     return
   end
 
@@ -134,6 +138,7 @@ def handle_input(args)
   idol[:x] = player.x
   idol[:y] = player.y
   player.idols_held -= 1
+  args.state.sound.play(args, :idol_place)
 end
 
 def calc(args)
@@ -143,6 +148,7 @@ def calc(args)
   # Repel: E key blasts nearby shoggoths away
   if args.inputs.keyboard.key_down.e && player.repel_ready?
     player.repel!(Kernel.tick_count)
+    args.state.sound.play(args, :repel)
     repel_r_sq = Player::REPEL_RADIUS**2
     args.state.boids.each do |b|
       dx = b.x - player.x
@@ -222,7 +228,9 @@ def calc(args)
     min_d = b.collision_r + player.radius
     if d2 < min_d * min_d
       dmg = b.tier == 3 ? 2 : 1
+      was_inv = player.invincible?
       player.take_hit(damage: dmg)
+      args.state.sound.play(args, :player_hit) if !was_inv && player.invincible?
     end
   end
 
@@ -297,6 +305,7 @@ def check_merge(args)
       pr, pg, pb = tier == 1 ? [80, 255, 120] : [200, 80, 255]
       emit_particles(args, idol[:x], idol[:y], 20, r: pr, g: pg, b: pb, speed: 3.5, size: 6)
       args.state.merge_flash = 6
+      args.state.sound.play(args, tier == 1 ? :merge_small : :merge_large)
 
       idol[:placed] = false
       args.state.player.idols_held += 1
@@ -323,12 +332,17 @@ def check_win(args)
 
   if large_at_altar >= LARGE_FOR_WIN && player_at_altar
     args.state.summon_ticks += 1
+    args.state.sound.play(args, :ritual_tick) if args.state.summon_ticks % 60 == 0
     if Kernel.tick_count % 4 == 0
       emit_particles(args, ax, ay, 3, r: 160 + rand(60), g: 40, b: 240 + rand(15), speed: 1.2 + rand * 0.8, size: 5)
     end
     if args.state.summon_ticks >= SUMMON_TICKS_NEEDED
       args.state.won = true
-      args.state.end_tick ||= Kernel.tick_count
+      if args.state.end_tick.nil?
+        args.state.end_tick = Kernel.tick_count
+        args.state.sound.fade_out(args, :ambient, ticks: 90)
+        args.state.sound.start_music(args, :win, gain: 0.9)
+      end
     end
   else
     # Drain slowly if not holding
@@ -363,6 +377,7 @@ def intro_screen(args)
      kd.up || kd.down || kd.left || kd.right || args.inputs.mouse.click
     args.state.intro = false
     args.state.start_tick = Kernel.tick_count
+    args.state.sound.start_music(args, :ambient)
   end
   true
 end
@@ -375,7 +390,10 @@ def game_over_screen(args)
                            alignment_enum: 1, size_enum: 8, r: 255, g: 50, b: 50, a: 255 }
   args.outputs.labels << { x: 640, y: 355, text: 'click to restart',
                            alignment_enum: 1, r: 200, g: 200, b: 200, a: 255 }
-  args.state = {} if args.inputs.mouse.click
+  if args.inputs.mouse.click
+    args.state.sound.stop_all_music(args)
+    args.state = {}
+  end
   true
 end
 
@@ -420,7 +438,10 @@ def win_screen(args)
                            alignment_enum: 1, size_enum: 1, r: 180, g: 140, b: 255, a: text_a }
   args.outputs.labels << { x: 640, y: 80, text: 'click to play again',
                            alignment_enum: 1, r: 140, g: 140, b: 160, a: text_a }
-  args.state = {} if args.inputs.mouse.click
+  if args.inputs.mouse.click
+    args.state.sound.stop_all_music(args)
+    args.state = {}
+  end
   true
 end
 
@@ -467,6 +488,7 @@ def check_infighting(args)
       eat_r = b.collision_r + Hunter::RADIUS - 6
       next unless dx * dx + dy * dy < eat_r * eat_r
       emit_particles(args, h.x, h.y, 10, r: 200, g: 20, b: 20, speed: 2.0, size: 5)
+      args.state.sound.play(args, :hunter_die)
       true
     end
   end
@@ -498,7 +520,11 @@ def tick_hunters(args)
     end
 
     dx = h.x - player.x; dy = h.y - player.y
-    player.take_hit if dx * dx + dy * dy < (Hunter::RADIUS + player.radius)**2
+    if dx * dx + dy * dy < (Hunter::RADIUS + player.radius)**2
+      was_inv = player.invincible?
+      player.take_hit
+      args.state.sound.play(args, :player_hit) if !was_inv && player.invincible?
+    end
   end
 
   args.state.hunters.reject!(&:dead?)
@@ -589,14 +615,19 @@ def render_altar(args)
                            alignment_enum: 1, size_enum: -2, r: 220, g: 150, b: 255, a: 255 }
 end
 
+IDOL_W = 41
+IDOL_H = 64
+
 def render_idols(args)
   args.state.idols.each do |idol|
     next unless idol[:placed]
 
-    pulse = (Math.sin(Kernel.tick_count * 0.12) * 20 + 200).to_i
+    pulse = (Math.sin(Kernel.tick_count * 0.12) * 30 + 220).to_i
     args.outputs.sprites << {
-      x: idol[:x] - 8, y: idol[:y] - 8, w: 16, h: 16,
-      path: :solid, r: pulse, g: 210, b: 50, a: 255
+      x: idol[:x] - IDOL_W / 2, y: idol[:y] - IDOL_H / 2,
+      w: IDOL_W, h: IDOL_H,
+      path: 'sprites/idol.png',
+      r: pulse, g: pulse, b: 80, a: 255, blendmode_enum: 1
     }
   end
 end

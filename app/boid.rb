@@ -139,12 +139,19 @@ module Flock
         ax += sx * W_SEP; ay += sy * W_SEP
       end
 
-      # Find nearest placed idol (tier 1+2) or use altar (tier 3)
+      # Find nearest placed idol (tier 1+2) or best target for tier 3
       near_idol = false
       if b.tier == 3
-        best_dx = altar_x - b.x; best_dy = altar_y - b.y
-        best_d2 = best_dx * best_dx + best_dy * best_dy
-        near_idol = best_d2 < Cave::ALTAR_RADIUS * Cave::ALTAR_RADIUS
+        altar_dx = altar_x - b.x; altar_dy = altar_y - b.y
+        altar_d2 = altar_dx * altar_dx + altar_dy * altar_dy
+        pdx = player_x - b.x; pdy = player_y - b.y
+        pd2 = pdx * pdx + pdy * pdy
+        if pd2 < altar_d2
+          best_dx = pdx; best_dy = pdy; best_d2 = pd2
+        else
+          best_dx = altar_dx; best_dy = altar_dy; best_d2 = altar_d2
+        end
+        near_idol = altar_d2 < Cave::ALTAR_RADIUS * Cave::ALTAR_RADIUS
       else
         best_d2 = Float::INFINITY
         best_dx = best_dy = 0.0
@@ -159,9 +166,9 @@ module Flock
         near_idol = best_d2 < Cave::MERGE_RADIUS * Cave::MERGE_RADIUS
       end
 
-      # Suppress autonomous behavior when locked onto target
-      wander_scale = near_idol ? 0.05 : 1.0
-      impulse_ok   = !near_idol
+      # Tier 3 always marches — suppress wander and impulses entirely
+      wander_scale = (near_idol || b.tier == 3) ? 0.05 : 1.0
+      impulse_ok   = !(near_idol || b.tier == 3)
 
       b.wander_angle += (rand - 0.5) * WANDER_ANGLE_STEP
       ax += Math.cos(b.wander_angle) * W_WANDER * b.personality[:wander_scale] * wander_scale
@@ -186,8 +193,11 @@ module Flock
       b.speed_target  = b.speed_target.clamp(SPEED_MULT_MIN, SPEED_MULT_MAX)
       b.speed_mult   += (b.speed_target - b.speed_mult) * 0.05
 
-      # Seek target — strong pull when close, moderate pull when far
-      if b.tier == 3 || best_d2 < IDOL_ATTRACT_RADIUS_SQ
+      # Seek target
+      if b.tier == 3
+        sx, sy = steer_to(best_dx, best_dy, b.vx, b.vy)
+        ax += sx * (near_idol ? 5.0 : 3.5); ay += sy * (near_idol ? 5.0 : 3.5)
+      elsif best_d2 < IDOL_ATTRACT_RADIUS_SQ
         sx, sy = steer_to(best_dx, best_dy, b.vx, b.vy)
         weight = near_idol ? 5.0 : (0.6 * (1.0 - Math.sqrt(best_d2) / Math.sqrt(IDOL_ATTRACT_RADIUS_SQ)))
         ax += sx * weight; ay += sy * weight
