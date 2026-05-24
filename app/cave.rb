@@ -10,34 +10,34 @@ module Cave
 
   # Pure floor tiles — no wall components, safe to tile anywhere
   FLOOR_TILES = [
-    'sprites/environment/tiles/tile_(_20_).png',
-    'sprites/environment/tiles/tile_(_20_).png',
-    'sprites/environment/tiles/tile_(_20_).png',
-    'sprites/environment/tiles/tile_(_14_).png',
-    'sprites/environment/tiles/tile_(_16_).png',
-    'sprites/environment/tiles/tile_(_17_).png',
-    'sprites/environment/tiles/tile_(_19_).png',
-    'sprites/environment/tiles/tile_(_21_).png',
-    'sprites/environment/tiles/tile_(_22_).png',
+    'sprites/environment/tiles/tile_20.png',
+    'sprites/environment/tiles/tile_20.png',
+    'sprites/environment/tiles/tile_20.png',
+    'sprites/environment/tiles/tile_14.png',
+    'sprites/environment/tiles/tile_16.png',
+    'sprites/environment/tiles/tile_17.png',
+    'sprites/environment/tiles/tile_19.png',
+    'sprites/environment/tiles/tile_21.png',
+    'sprites/environment/tiles/tile_22.png',
   ].freeze
 
-  GRATE_TILE = 'sprites/environment/tiles/tile_(_13_).png'
+  GRATE_TILE = 'sprites/environment/tiles/tile_13.png'
 
   WALL_TILES = [
-    'sprites/environment/tiles/tile_(_9_).png',
-    'sprites/environment/tiles/tile_(_10_).png',
-    'sprites/environment/tiles/tile_(_10_).png',
-    'sprites/environment/tiles/tile_(_12_).png',
+    'sprites/environment/tiles/tile_9.png',
+    'sprites/environment/tiles/tile_10.png',
+    'sprites/environment/tiles/tile_10.png',
+    'sprites/environment/tiles/tile_12.png',
   ].freeze
 
   PROP_POOL = [
     { path: 'sprites/environment/objects/skeleton_1.png',      w: 32, h: 32, cr: 10 },
     { path: 'sprites/environment/objects/skeleton_2.png',      w: 32, h: 32, cr: 10 },
-    { path: 'sprites/environment/objects/barrel_(_1_).png',    w: 28, h: 32, cr: 13 },
-    { path: 'sprites/environment/objects/barrel_(_2_).png',    w: 28, h: 32, cr: 13 },
-    { path: 'sprites/environment/objects/barrel_(_3_).png',    w: 28, h: 32, cr: 13 },
-    { path: 'sprites/environment/objects/pot_(_1_).png',       w: 24, h: 28, cr: 11 },
-    { path: 'sprites/environment/objects/pot_(_2_).png',       w: 24, h: 28, cr: 11 },
+    { path: 'sprites/environment/objects/barrel_1.png',    w: 28, h: 32, cr: 13 },
+    { path: 'sprites/environment/objects/barrel_2.png',    w: 28, h: 32, cr: 13 },
+    { path: 'sprites/environment/objects/barrel_3.png',    w: 28, h: 32, cr: 13 },
+    { path: 'sprites/environment/objects/pot_1.png',       w: 24, h: 28, cr: 11 },
+    { path: 'sprites/environment/objects/pot_2.png',       w: 24, h: 28, cr: 11 },
     { path: 'sprites/environment/objects/crate.png',           w: 30, h: 30, cr: 13 },
   ].freeze
 
@@ -264,14 +264,14 @@ module Cave
   end
 
   # Edge/corner wall tiles keyed by which orthogonal/diagonal neighbors are floor
-  EDGE_S  = ['sprites/environment/tiles/tile_(_25_).png', 'sprites/environment/tiles/tile_(_26_).png'].freeze
-  EDGE_N  = ['sprites/environment/tiles/tile_(_36_).png', 'sprites/environment/tiles/tile_(_37_).png'].freeze
-  EDGE_E  = 'sprites/environment/tiles/tile_(_29_).png'
-  EDGE_W  = 'sprites/environment/tiles/tile_(_33_).png'
-  CORNER_SE = 'sprites/environment/tiles/tile_(_24_).png'
-  CORNER_SW = 'sprites/environment/tiles/tile_(_28_).png'
-  CORNER_NE = 'sprites/environment/tiles/tile_(_34_).png'
-  CORNER_NW = 'sprites/environment/tiles/tile_(_38_).png'
+  EDGE_S  = ['sprites/environment/tiles/tile_25.png', 'sprites/environment/tiles/tile_26.png'].freeze
+  EDGE_N  = ['sprites/environment/tiles/tile_36.png', 'sprites/environment/tiles/tile_37.png'].freeze
+  EDGE_E  = 'sprites/environment/tiles/tile_29.png'
+  EDGE_W  = 'sprites/environment/tiles/tile_33.png'
+  CORNER_SE = 'sprites/environment/tiles/tile_24.png'
+  CORNER_SW = 'sprites/environment/tiles/tile_28.png'
+  CORNER_NE = 'sprites/environment/tiles/tile_34.png'
+  CORNER_NW = 'sprites/environment/tiles/tile_38.png'
 
   def self.render(grid)
     ROWS.times.flat_map do |r|
@@ -289,10 +289,10 @@ module Cave
     end
   end
 
-  OUTER_CORNER_NW = 'sprites/environment/tiles/tile_(_80_).png'
-  OUTER_CORNER_NE = 'sprites/environment/tiles/tile_(_81_).png'
-  OUTER_CORNER_SW = 'sprites/environment/tiles/tile_(_82_).png'
-  OUTER_CORNER_SE = 'sprites/environment/tiles/tile_(_83_).png'
+  OUTER_CORNER_NW = 'sprites/environment/tiles/tile_80.png'
+  OUTER_CORNER_NE = 'sprites/environment/tiles/tile_81.png'
+  OUTER_CORNER_SW = 'sprites/environment/tiles/tile_82.png'
+  OUTER_CORNER_SE = 'sprites/environment/tiles/tile_83.png'
 
   def self.wall_tile(grid, c, r, hash)
     floor_s  = !wall?(grid, c,   r - 1)
