@@ -89,6 +89,27 @@ module CthulhuFrames
   ].freeze
 end
 
+module AttackFrames
+  # attack.png: 1820x140, 13 frames at 140px each, top-left tile origin.
+  # F0-F7: wind-up. F8-12: projectile release (extends right of body).
+  # cx_off anchored to character body center so player position stays stable.
+  ALL = [
+    { x:   57, y: 44, w: 32, h: 53, cx_off: 16, cy_off: 26 },
+    { x:  196, y: 45, w: 32, h: 52, cx_off: 16, cy_off: 26 },
+    { x:  334, y: 42, w: 30, h: 55, cx_off: 15, cy_off: 27 },
+    { x:  474, y: 33, w: 23, h: 63, cx_off: 11, cy_off: 31 },
+    { x:  612, y: 32, w: 25, h: 65, cx_off: 12, cy_off: 32 },
+    { x:  751, y: 32, w: 26, h: 65, cx_off: 13, cy_off: 32 },
+    { x:  894, y: 31, w: 23, h: 66, cx_off: 11, cy_off: 33 },
+    { x: 1034, y: 33, w: 30, h: 64, cx_off: 15, cy_off: 32 },
+    { x: 1170, y: 34, w: 63, h: 63, cx_off: 15, cy_off: 31 },
+    { x: 1309, y: 36, w: 72, h: 61, cx_off: 16, cy_off: 30 },
+    { x: 1450, y: 38, w: 79, h: 59, cx_off: 15, cy_off: 29 },
+    { x: 1596, y: 39, w: 81, h: 57, cx_off:  9, cy_off: 28 },
+    { x: 1737, y: 45, w: 68, h: 52, cx_off:  8, cy_off: 26 },
+  ].freeze
+end
+
 module HunterFrames
   # hunter-run.png: 1200x150, 8 frames each 150x150, top-left origin.
   # Content bounds measured per frame; cx_off/cy_off = visual center within bbox.

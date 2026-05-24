@@ -142,7 +142,7 @@ def calc(args)
 
   # Stomp: E key blasts nearby shoggoths away
   if args.inputs.keyboard.key_down.e && player.stomp_ready?
-    player.stomp!
+    player.stomp!(Kernel.tick_count)
     stomp_r_sq = Player::STOMP_RADIUS**2
     args.state.boids.each do |b|
       dx = b.x - player.x
@@ -641,12 +641,13 @@ def render_hud(args)
   args.outputs.sprites << { x: 10, y: 28, w: fill, h: 5,
                             path: :solid, r: 255, g: 180, b: 50, a: 255 }
 
-  # Stomp flash ring
+  # Stomp radius indicator — brief expanding ring
   if (args.state.stomp_flash || 0) > 0
-    r = Player::STOMP_RADIUS * (1.0 - args.state.stomp_flash / 8.0)
-    a = (args.state.stomp_flash * 30).clamp(0, 220)
+    t = 1.0 - args.state.stomp_flash / 8.0
+    r = Player::STOMP_RADIUS * t
+    a = (args.state.stomp_flash * 20).clamp(0, 120)
     args.outputs.sprites << { x: player.x - r, y: player.y - r, w: r * 2, h: r * 2,
-                              path: :solid, r: 255, g: 220, b: 80, a: a }
+                              path: :solid, r: 160, g: 80, b: 255, a: a }
   end
 
   # Ritual stage indicator bottom-right

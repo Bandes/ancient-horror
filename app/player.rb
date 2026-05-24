@@ -4,26 +4,33 @@ class Player
   MAX_SANITY     = 100
   HIT_COOLDOWN   = 60
   RADIUS         = 12
-  STOMP_COOLDOWN = 150
-  STOMP_RADIUS   = 110
-  STOMP_FORCE    = 2.2
-  SCALE          = 1.0
+  STOMP_COOLDOWN       = 150
+  STOMP_RADIUS         = 110
+  STOMP_FORCE          = 2.2
+  SCALE                = 1.0
+  ATTACK_FRAME_DURATION = 4
 
   attr_accessor :x, :y, :hp, :sanity, :hit_timer, :idols_held
 
   def initialize(x:, y:)
-    @x           = x.to_f
-    @y           = y.to_f
-    @hp          = MAX_HP
-    @sanity      = MAX_SANITY
-    @hit_timer   = 0
-    @idols_held  = 6
-    @facing_left = false
-    @stomp_timer = 0
-    @animator    = SpriteAnimator.new(
+    @x              = x.to_f
+    @y              = y.to_f
+    @hp             = MAX_HP
+    @sanity         = MAX_SANITY
+    @hit_timer      = 0
+    @idols_held     = 6
+    @facing_left    = false
+    @stomp_timer    = 0
+    @attack_tick    = nil
+    @animator       = SpriteAnimator.new(
       path: 'sprites/walk.png',
       frames: WalkFrames::ALL,
       frame_duration: 6
+    )
+    @attack_animator = SpriteAnimator.new(
+      path: 'sprites/attack.png',
+      frames: AttackFrames::ALL,
+      frame_duration: ATTACK_FRAME_DURATION
     )
   end
 
@@ -83,8 +90,14 @@ class Player
     @hit_timer > 0
   end
 
-  def stomp!
+  def stomp!(tick_count)
     @stomp_timer = STOMP_COOLDOWN
+    @attack_tick = tick_count
+    @attack_animator.reset(tick_count)
+  end
+
+  def attacking?(tick_count)
+    @attack_tick && tick_count - @attack_tick < AttackFrames::ALL.length * ATTACK_FRAME_DURATION
   end
 
   def stomp_ready?
@@ -106,10 +119,13 @@ class Player
   def render(tick_count, sanity_pct: 1.0)
     flash = invincible? && (@hit_timer % 6 < 3)
     a     = flash ? 80 : 255
-    # Red tint as sanity drops
     g = (sanity_pct * 255).to_i
     b = (sanity_pct * 255).to_i
-    sprite = @animator.sprite(tick_count, anchor_x: @x, anchor_y: @y, scale: SCALE)
+    if attacking?(tick_count)
+      sprite = @attack_animator.sprite(tick_count, anchor_x: @x, anchor_y: @y, scale: SCALE)
+    else
+      sprite = @animator.sprite(tick_count, anchor_x: @x, anchor_y: @y, scale: SCALE)
+    end
     sprite[:flip_horizontally] = @facing_left
     sprite[:a] = a
     sprite[:r] = 255
