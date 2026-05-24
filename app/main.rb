@@ -138,35 +138,35 @@ end
 
 def calc(args)
   player = args.state.player
-  player.tick_stomp
+  player.tick_repel
 
-  # Stomp: E key blasts nearby shoggoths away
-  if args.inputs.keyboard.key_down.e && player.stomp_ready?
-    player.stomp!(Kernel.tick_count)
-    stomp_r_sq = Player::STOMP_RADIUS**2
+  # Repel: E key blasts nearby shoggoths away
+  if args.inputs.keyboard.key_down.e && player.repel_ready?
+    player.repel!(Kernel.tick_count)
+    repel_r_sq = Player::REPEL_RADIUS**2
     args.state.boids.each do |b|
       dx = b.x - player.x
       dy = b.y - player.y
       d2 = dx * dx + dy * dy
-      next if d2 > stomp_r_sq || d2 < 0.0001
+      next if d2 > repel_r_sq || d2 < 0.0001
 
       d     = Math.sqrt(d2)
-      force = Player::STOMP_FORCE * (1.0 - d / Player::STOMP_RADIUS)
+      force = Player::REPEL_FORCE * (1.0 - d / Player::REPEL_RADIUS)
       b.vx += dx / d * force
       b.vy += dy / d * force
     end
     args.state.hunters.each do |h|
       dx = h.x - player.x; dy = h.y - player.y
       d2 = dx * dx + dy * dy
-      next if d2 > stomp_r_sq || d2 < 0.0001
+      next if d2 > repel_r_sq || d2 < 0.0001
       d = Math.sqrt(d2)
-      force = Player::STOMP_FORCE * 1.5 * (1.0 - d / Player::STOMP_RADIUS)
+      force = Player::REPEL_FORCE * 1.5 * (1.0 - d / Player::REPEL_RADIUS)
       h.vx += dx / d * force; h.vy += dy / d * force
       h.take_hit
     end
-    args.state.stomp_flash = 8
+    args.state.repel_flash = 8
   end
-  args.state.stomp_flash = [(args.state.stomp_flash || 0) - 1, 0].max
+  args.state.repel_flash = [(args.state.repel_flash || 0) - 1, 0].max
 
   Flock.step(
     args.state.boids,
@@ -352,7 +352,7 @@ def intro_screen(args)
                            alignment_enum: 1, size_enum: 0, r: 200, g: 200, b: 200, a: 255 }
   args.outputs.labels << { x: 640, y: 320, text: 'Hold the altar with 2 great ones to complete the ritual.',
                            alignment_enum: 1, size_enum: 0, r: 200, g: 200, b: 200, a: 255 }
-  args.outputs.labels << { x: 640, y: 270, text: '[ E ] Stomp — blasts shoggoths and hunters back',
+  args.outputs.labels << { x: 640, y: 270, text: '[ E ] Repel — blasts shoggoths and hunters back',
                            alignment_enum: 1, size_enum: 0, r: 180, g: 160, b: 200, a: 255 }
   args.outputs.labels << { x: 640, y: 245, text: 'Inquisitors will hunt your idols. Stay calm. Your sanity will not hold forever.',
                            alignment_enum: 1, size_enum: 0, r: 160, g: 100, b: 140, a: 255 }
@@ -630,22 +630,22 @@ def render_hud(args)
   args.outputs.sprites << { x: 1270 - san_w, y: 692, w: san_fill, h: 6,
                             path: :solid, r: san_r, g: san_g, b: 200, a: 255 }
 
-  # Stomp cooldown bar (bottom-left)
+  # Repel cooldown bar (bottom-left)
   bar_w = 80
-  ready = player.stomp_ready?
+  ready = player.repel_ready?
   args.outputs.labels << { x: 10, y: 24, text: ready ? '[E] STOMP' : '[E] ...',
                            size_enum: -2, r: ready ? 255 : 140, g: ready ? 200 : 140, b: ready ? 80 : 140, a: 255 }
   args.outputs.sprites << { x: 10, y: 28, w: bar_w, h: 5,
                             path: :solid, r: 40, g: 40, b: 40, a: 180 }
-  fill = ready ? bar_w : ((1.0 - player.stomp_cooldown_pct) * bar_w).to_i
+  fill = ready ? bar_w : ((1.0 - player.repel_cooldown_pct) * bar_w).to_i
   args.outputs.sprites << { x: 10, y: 28, w: fill, h: 5,
                             path: :solid, r: 255, g: 180, b: 50, a: 255 }
 
-  # Stomp radius indicator — brief expanding ring
-  if (args.state.stomp_flash || 0) > 0
-    t = 1.0 - args.state.stomp_flash / 8.0
-    r = Player::STOMP_RADIUS * t
-    a = (args.state.stomp_flash * 20).clamp(0, 120)
+  # Repel radius indicator — brief expanding ring
+  if (args.state.repel_flash || 0) > 0
+    t = 1.0 - args.state.repel_flash / 8.0
+    r = Player::REPEL_RADIUS * t
+    a = (args.state.repel_flash * 20).clamp(0, 120)
     args.outputs.sprites << { x: player.x - r, y: player.y - r, w: r * 2, h: r * 2,
                               path: :solid, r: 160, g: 80, b: 255, a: a }
   end

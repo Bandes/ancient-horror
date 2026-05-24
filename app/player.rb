@@ -4,9 +4,9 @@ class Player
   MAX_SANITY     = 100
   HIT_COOLDOWN   = 60
   RADIUS         = 12
-  STOMP_COOLDOWN       = 150
-  STOMP_RADIUS         = 110
-  STOMP_FORCE          = 2.2
+  REPEL_COOLDOWN       = 150
+  REPEL_RADIUS         = 110
+  REPEL_FORCE          = 2.2
   SCALE                = 1.0
   ATTACK_FRAME_DURATION = 4
 
@@ -20,7 +20,7 @@ class Player
     @hit_timer      = 0
     @idols_held     = 6
     @facing_left    = false
-    @stomp_timer    = 0
+    @repel_timer    = 0
     @attack_tick    = nil
     @animator       = SpriteAnimator.new(
       path: 'sprites/walk.png',
@@ -90,8 +90,8 @@ class Player
     @hit_timer > 0
   end
 
-  def stomp!(tick_count)
-    @stomp_timer = STOMP_COOLDOWN
+  def repel!(tick_count)
+    @repel_timer = REPEL_COOLDOWN
     @attack_tick = tick_count
     @attack_animator.reset(tick_count)
   end
@@ -100,16 +100,16 @@ class Player
     @attack_tick && tick_count - @attack_tick < AttackFrames::ALL.length * ATTACK_FRAME_DURATION
   end
 
-  def stomp_ready?
-    @stomp_timer == 0
+  def repel_ready?
+    @repel_timer == 0
   end
 
-  def stomp_cooldown_pct
-    @stomp_timer.to_f / STOMP_COOLDOWN
+  def repel_cooldown_pct
+    @repel_timer.to_f / REPEL_COOLDOWN
   end
 
-  def tick_stomp
-    @stomp_timer -= 1 if @stomp_timer > 0
+  def tick_repel
+    @repel_timer -= 1 if @repel_timer > 0
   end
 
   def radius
