@@ -96,8 +96,12 @@ module Flock
     end
   end
 
-  def self.step(boids, cave_grid:, idols:, altar_x:, altar_y:, player_x:, player_y:, ritual_stage: 0)
-    speed_boost   = 1.0 + ritual_stage * 0.15
+  HUNTER_FLEE_R    = 130.0
+  HUNTER_FLEE_R_SQ = HUNTER_FLEE_R * HUNTER_FLEE_R
+  W_HUNTER_FLEE    = 2.4
+
+  def self.step(boids, cave_grid:, idols:, altar_x:, altar_y:, player_x:, player_y:, ritual_stage: 0, hunters: [], speed_mult: 1.0)
+    speed_boost   = (1.0 + ritual_stage * 0.15) * speed_mult
     player_w_boost = 1.0 + ritual_stage * 0.25
     perception_sq = PERCEPTION * PERCEPTION
     sep_sq        = SEPARATION_R * SEPARATION_R
@@ -203,6 +207,25 @@ module Flock
         ax += sx * weight; ay += sy * weight
       end
 
+      # Panic flee from hunters (tier 1+2 only; tier 3 is bigger than they are)
+      if b.tier < 3 && !hunters.empty?
+        flee_x = flee_y = 0.0; flee_n = 0
+        hunters.each do |h|
+          hdx = b.x - h.x; hdy = b.y - h.y
+          hd2 = hdx * hdx + hdy * hdy
+          next if hd2 > HUNTER_FLEE_R_SQ || hd2 < 0.0001
+          hd = Math.sqrt(hd2)
+          weight = 1.0 - hd / HUNTER_FLEE_R
+          flee_x += hdx / hd * weight
+          flee_y += hdy / hd * weight
+          flee_n += 1
+        end
+        if flee_n > 0
+          sx, sy = steer_to(flee_x, flee_y, b.vx, b.vy)
+          ax += sx * W_HUNTER_FLEE; ay += sy * W_HUNTER_FLEE
+        end
+      end
+
       # Player as lure — tier 1+2 attracted to player at medium range
       if b.tier < 3
         pdx = player_x - b.x; pdy = player_y - b.y
@@ -259,8 +282,18 @@ module Flock
       b.y  = ((b.y - r).idiv(Cave::TILE_SIZE) + 1) * Cave::TILE_SIZE + r + 0.5
     end
 
-    b.x = b.x.clamp(r, 1280.0 - r)
-    b.y = b.y.clamp(r, 720.0  - r)
+    # Diagonal corner safety — axis tests can miss inside corners
+    if Cave.blocks_circle?(cave_grid, b.x, b.y, r)
+      sp = Math.sqrt(b.vx * b.vx + b.vy * b.vy)
+      if sp > 0.001
+        b.x -= b.vx / sp * (r * 0.5)
+        b.y -= b.vy / sp * (r * 0.5)
+      end
+      b.vx *= 0.2; b.vy *= 0.2
+    end
+
+    b.x = b.x.clamp(Cave::TILE_SIZE + r, 1280.0 - Cave::TILE_SIZE - r)
+    b.y = b.y.clamp(Cave::TILE_SIZE + r, 720.0  - Cave::TILE_SIZE - r)
   end
 
   def self.resolve_collisions(boids)

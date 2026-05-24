@@ -70,50 +70,96 @@ module Cave
   end
 
   def self.generate
-    10.times do
+    20.times do
       result = try_generate
       return result if result
     end
     fallback_generate
   end
 
+  # Interior column range split into thirds for wall placement
+  INTERIOR_C1 = 3;  INTERIOR_C2 = 7   # left zone
+  INTERIOR_C3 = 8;  INTERIOR_C4 = 12  # mid zone
+  INTERIOR_C5 = 13; INTERIOR_C6 = 17  # right zone
+  INTERIOR_R1 = 2;  INTERIOR_R2 = 8   # row bounds
+
   def self.try_generate
-    grid = Array.new(ROWS) { Array.new(COLS, :wall) }
-
-    # Two large chambers, each filling most of their half
-    chamber_w = 7 + rand(3)                           # 7-9
-    chamber_w = [chamber_w, COLS.idiv(2) - 1].min
-    chamber_h = ROWS - 2                               # full interior height = 9
-
-    # Left chamber flush to left border
-    carve_rect(grid, 1, 1, chamber_w, chamber_h)
-
-    # Right chamber flush to right border
-    rx = COLS - 1 - chamber_w
-    carve_rect(grid, rx, 1, chamber_w, chamber_h)
-
-    # Carve 2-3 corridors through the gap at different row heights
-    gap_left  = 1 + chamber_w
-    gap_right = rx - 1
-    rows_carved = []
-    (2 + rand(2)).times do
-      50.times do
-        r = 1 + rand(ROWS - 2)
-        next if rows_carved.any? { |used| (used - r).abs < 2 }
-        carve_h(grid, r, gap_left, gap_right + 1)
-        rows_carved << r
-        break
+    grid = Array.new(ROWS) do |r|
+      Array.new(COLS) do |c|
+        (r == 0 || r == ROWS - 1 || c == 0 || c == COLS - 1) ? :wall : :floor
       end
     end
-    # Guarantee at least one corridor
-    carve_h(grid, ROWS.idiv(2), gap_left, gap_right + 1) if rows_carved.empty?
 
-    sc = 1 + chamber_w.idiv(2)
-    sr = ROWS.idiv(2)
-    ac = rx + chamber_w.idiv(2)
-    ar = ROWS.idiv(2)
+    # Place one wall in each zone — 3 total.
+    # Pick 2 or 3 zones randomly so the layout varies run-to-run.
+    zones = [[INTERIOR_C1, INTERIOR_C2],
+             [INTERIOR_C3, INTERIOR_C4],
+             [INTERIOR_C5, INTERIOR_C6]].shuffle
+    zone_count = 2 + rand(2)   # 2 or 3
+    i = 0
+    while i < zone_count
+      place_wall_segment(grid, zones[i][0], zones[i][1])
+      i += 1
+    end
+
+    # Fixed spawn/altar — open arena is always fully connected, no check needed
+    sc = 2;          sr = ROWS / 2
+    ac = COLS - 3;   ar = ROWS / 2
+
+    clear_around(grid, sc, sr)
+    clear_around(grid, ac, ar)
 
     { grid: grid, altar_col: ac, altar_row: ar, spawn_col: sc, spawn_row: sr }
+  end
+
+  # Carve a short wall segment (horizontal or vertical) somewhere in the zone.
+  # Leaves at least one tile of gap at each end so flow is never fully blocked.
+  def self.place_wall_segment(grid, col_min, col_max)
+    if rand < 0.5
+      # Horizontal wall: pick a row, span most of the zone width, leave 1-tile gap at random end
+      row    = INTERIOR_R1 + rand(INTERIOR_R2 - INTERIOR_R1 + 1)
+      length = col_max - col_min - 1   # leave 1 tile open
+      gap_at_start = rand < 0.5
+      c_start = gap_at_start ? col_min + 1 : col_min
+      c = c_start
+      while c < c_start + length && c <= col_max && c.between?(1, COLS - 2)
+        grid[row][c] = :wall if row.between?(1, ROWS - 2)
+        c += 1
+      end
+    else
+      # Vertical wall: full interior height minus 1-tile gap at random end
+      col    = col_min + rand(col_max - col_min + 1)
+      length = INTERIOR_R2 - INTERIOR_R1 - 1
+      gap_at_bottom = rand < 0.5
+      r_start = gap_at_bottom ? INTERIOR_R1 + 1 : INTERIOR_R1
+      r = r_start
+      while r < r_start + length && r <= INTERIOR_R2 && r.between?(1, ROWS - 2)
+        grid[r][col] = :wall if col.between?(1, COLS - 2)
+        r += 1
+      end
+    end
+  end
+
+  def self.pick_far_cell(grid, col_min, col_max, row_min, row_max)
+    candidates = []
+    r = row_min
+    while r <= row_max
+      c = col_min
+      while c <= col_max
+        candidates << [c, r] unless wall?(grid, c, r)
+        c += 1
+      end
+      r += 1
+    end
+    return [nil, nil] if candidates.empty?
+    candidates[rand(candidates.length)]
+  end
+
+  def self.clear_around(grid, c, r)
+    [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1]].each do |dc, dr|
+      nc = c + dc; nr = r + dr
+      grid[nr][nc] = :floor if nr.between?(1, ROWS - 2) && nc.between?(1, COLS - 2)
+    end
   end
 
   def self.connect_rooms(grid, rooms)
@@ -145,6 +191,12 @@ module Cave
     grid = Array.new(ROWS) do |r|
       Array.new(COLS) { |c| (r == 0 || r == ROWS - 1 || c == 0 || c == COLS - 1) ? :wall : :floor }
     end
+    # A few simple interior walls even in fallback
+    r = ROWS / 2
+    c = 5
+    while c <= 7; grid[r][c] = :wall; c += 1; end
+    c = COLS - 8
+    while c <= COLS - 6; grid[r + 2][c] = :wall; c += 1; end
     { grid: grid, altar_col: COLS - 3, altar_row: ROWS / 2, spawn_col: 2, spawn_row: ROWS / 2 }
   end
 
@@ -236,14 +288,19 @@ module Cave
     fe = col < COLS - 1 && grid[row][col + 1] != :wall
     fw = col > 0        && grid[row][col - 1] != :wall
 
+    floor_faces = (fs ? 1 : 0) + (fn ? 1 : 0) + (fe ? 1 : 0) + (fw ? 1 : 0)
+    # Interior walls (floor on 2+ sides) are fully solid.
+    # Bleed only applies to single-face walls (outer border sides).
+    return true if floor_faces >= 2
+
     if fs
-      ly >= WALL_BLEED                  # south bleed: bottom strip walkable
+      ly >= WALL_BLEED
     elsif fn
-      ly < TILE_SIZE - WALL_BLEED      # north bleed: top strip walkable
+      ly < TILE_SIZE - WALL_BLEED
     elsif fe
-      lx < TILE_SIZE - WALL_BLEED      # east bleed: right strip walkable
+      lx < TILE_SIZE - WALL_BLEED
     elsif fw
-      lx >= WALL_BLEED                  # west bleed: left strip walkable
+      lx >= WALL_BLEED
     else
       true
     end
@@ -251,6 +308,21 @@ module Cave
 
   def self.walkable_pixel?(grid, px, py)
     !wall_at_px?(grid, px, py)
+  end
+
+  # Circle vs walls test — samples 8 points around perimeter so diagonal corners
+  # cannot slip through (single-axis sampling misses interior corners).
+  def self.blocks_circle?(grid, cx, cy, r)
+    return true if blocks_movement?(grid, (cx + r).to_i, cy.to_i)
+    return true if blocks_movement?(grid, (cx - r).to_i, cy.to_i)
+    return true if blocks_movement?(grid, cx.to_i, (cy + r).to_i)
+    return true if blocks_movement?(grid, cx.to_i, (cy - r).to_i)
+    s = r * 0.7071
+    return true if blocks_movement?(grid, (cx + s).to_i, (cy + s).to_i)
+    return true if blocks_movement?(grid, (cx - s).to_i, (cy + s).to_i)
+    return true if blocks_movement?(grid, (cx + s).to_i, (cy - s).to_i)
+    return true if blocks_movement?(grid, (cx - s).to_i, (cy - s).to_i)
+    false
   end
 
   def self.tile_center(col, row)

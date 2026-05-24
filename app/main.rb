@@ -6,12 +6,36 @@ require 'app/hunter'
 require 'app/sound'
 
 CREATURE_COUNT        = 50
-LARGE_FOR_WIN         = 2
+LARGE_FOR_WIN         = 3
 MAX_SHOGGOTHS         = 120
 SPAWN_INTERVAL        = 360   # new shoggoth every 6 seconds
 SUMMON_TICKS_NEEDED   = 300   # hold altar 5 seconds to win
 HUNTER_SPAWN_INTERVAL = 1800  # new hunter every 30 seconds
 MAX_HUNTERS           = 3
+IDOL_SLOTS            = 6     # total idols in play (held + placed + scattered)
+STARTING_IDOLS        = 2     # idols on hand at run start
+
+# Escalation: every ESCALATE_INTERVAL ticks the spawn interval shrinks by
+# ESCALATE_STEP (clamped to SPAWN_INTERVAL_MIN) and one extra hunter slot opens.
+ESCALATE_INTERVAL    = 3600   # 60s
+ESCALATE_STEP        = 40
+SPAWN_INTERVAL_MIN   = 120
+MAX_HUNTERS_CAP      = 6
+
+MODIFIER_POOL = [
+  { key: :swift,        label: 'SWIFT ACOLYTE',   desc: '+30% move speed' },
+  { key: :fervor,       label: 'FERVOR',          desc: 'Repel cooldown halved' },
+  { key: :fragile,      label: 'FRAGILE PSYCHE',  desc: '+50 max sanity, drains 2x' },
+  { key: :ironflesh,    label: 'IRONFLESH',       desc: '+2 max HP, -20% speed' },
+  { key: :hunter_swarm, label: 'HUNTED',          desc: 'Hunter cap +2' },
+  { key: :dim_altar,    label: 'DIM ALTAR',       desc: 'Needs 4 great ones at altar' },
+  { key: :thin_veil,    label: 'THIN VEIL',       desc: 'Ritual fills 50% faster' },
+  { key: :eager,        label: 'EAGER SHOGGOTHS', desc: 'Boids 25% faster' },
+  { key: :keeper,       label: 'KEEPER OF TORCHES', desc: 'Sanity recovers 3x, -1 max HP' },
+  { key: :dread_pace,   label: 'DREAD PACE',      desc: 'Shoggoths spawn twice as fast' },
+  { key: :watcher_kin,  label: 'WATCHER KIN',     desc: 'Some hunters are Watchers — slow, drain sanity' }
+].freeze
+MODIFIER_PICK = 3
 
 def boot(args)
   args.state = {}
@@ -34,7 +58,13 @@ def tick(args)
 end
 
 def defaults(args)
+  ensure_modifier_state(args)
   return if args.state.initialized
+
+  modifiers = MODIFIER_POOL.shuffle.first(MODIFIER_PICK)
+  args.state.modifiers     = modifiers
+  args.state.modifier_keys = modifiers.map { |m| m[:key] }
+  mk = args.state.modifier_keys
 
   cave_data = Cave.generate
   args.state.cave_grid = cave_data[:grid]
@@ -42,7 +72,32 @@ def defaults(args)
   args.state.altar_y   = Cave.tile_center(cave_data[:altar_col], cave_data[:altar_row])[:y]
 
   spawn = Cave.tile_center(cave_data[:spawn_col], cave_data[:spawn_row])
-  args.state.player = Player.new(x: spawn[:x], y: spawn[:y])
+
+  player_max_hp = 5
+  player_max_hp += 2 if mk.include?(:ironflesh)
+  player_max_hp -= 1 if mk.include?(:keeper)
+  player_max_sanity = 100
+  player_max_sanity += 50 if mk.include?(:fragile)
+
+  args.state.player = Player.new(
+    x: spawn[:x], y: spawn[:y],
+    max_hp: [player_max_hp, 1].max,
+    max_sanity: player_max_sanity,
+    starting_idols: STARTING_IDOLS
+  )
+  args.state.player.speed_scale          = 1.0
+  args.state.player.speed_scale         *= 1.3 if mk.include?(:swift)
+  args.state.player.speed_scale         *= 0.8 if mk.include?(:ironflesh)
+  args.state.player.sanity_drain_scale   = mk.include?(:fragile) ? 2.0 : 1.0
+  args.state.player.sanity_recover_scale = mk.include?(:keeper)  ? 3.0 : 1.0
+  args.state.player.repel_cd_scale       = mk.include?(:fervor)  ? 0.5 : 1.0
+
+  args.state.large_for_win   = mk.include?(:dim_altar) ? 4 : LARGE_FOR_WIN
+  args.state.ritual_speed    = mk.include?(:thin_veil) ? 1.5 : 1.0
+  args.state.boid_speed_mult = mk.include?(:eager)     ? 1.25 : 1.0
+  args.state.spawn_scale     = mk.include?(:dread_pace) ? 0.5 : 1.0
+  args.state.hunter_cap_bonus = mk.include?(:hunter_swarm) ? 2 : 0
+  args.state.allow_watchers  = mk.include?(:watcher_kin)
 
   args.state.animator_factory = lambda {
     SpriteAnimator.new(
@@ -71,8 +126,9 @@ def defaults(args)
     cave_grid: args.state.cave_grid
   )
 
-  args.state.idols         = Array.new(6) { { placed: false, x: 0.0, y: 0.0 } }
+  args.state.idols         = Array.new(IDOL_SLOTS) { { placed: false, x: 0.0, y: 0.0 } }
   args.state.won           = false
+  args.state.elapsed_ticks = 0
   args.state.game_over     = false
   args.state.summon_ticks  = 0
   args.state.ritual_stage  = 0 # 0-3: how many large shoggoths have reached altar
@@ -85,6 +141,35 @@ def defaults(args)
   props = Cave.generate_props(args.state.cave_grid, exclude)
   args.state.prop_colliders = props.map { |p| { cx: p[:cx], cy: p[:cy], cr: p[:cr] } }
   args.state.bg_sprites = Cave.render(args.state.cave_grid) + props.map { |p| p[:sprite] }
+
+  # Scatter the remaining idols across the cave so the player must explore.
+  scatter_count = IDOL_SLOTS - STARTING_IDOLS
+  scatter_cells = args.state.floor_cells.reject do |c, r|
+    (c == cave_data[:spawn_col] && r == cave_data[:spawn_row]) ||
+      (c == cave_data[:altar_col] && r == cave_data[:altar_row])
+  end
+  player_px = spawn[:x]; player_py = spawn[:y]
+  far = scatter_cells.select do |c, r|
+    px = c * Cave::TILE_SIZE + Cave::TILE_SIZE / 2
+    py = r * Cave::TILE_SIZE + Cave::TILE_SIZE / 2
+    (px - player_px)**2 + (py - player_py)**2 > 220**2
+  end
+  pool = far.empty? ? scatter_cells : far
+  placed_idol_cells = []
+  scatter_count.times do |i|
+    next if pool.empty?
+    candidates = pool.reject do |c, r|
+      placed_idol_cells.any? { |pc, pr| (pc - c).abs + (pr - r).abs < 4 }
+    end
+    cell = (candidates.empty? ? pool : candidates).sample
+    placed_idol_cells << cell
+    col, row = cell
+    args.state.idols[STARTING_IDOLS + i] = {
+      placed: true,
+      x: col * Cave::TILE_SIZE + Cave::TILE_SIZE / 2.0,
+      y: row * Cave::TILE_SIZE + Cave::TILE_SIZE / 2.0
+    }
+  end
   args.state.sound         = Sound.new(args.gtk)
   args.state.intro         = true
   args.state.start_tick    = nil
@@ -182,7 +267,9 @@ def calc(args)
     altar_y: args.state.altar_y,
     player_x: player.x,
     player_y: player.y,
-    ritual_stage: args.state.ritual_stage
+    ritual_stage: args.state.ritual_stage,
+    hunters: args.state.hunters,
+    speed_mult: args.state.boid_speed_mult
   )
 
   prop_colliders = args.state.prop_colliders
@@ -227,6 +314,9 @@ def calc(args)
 
     min_d = b.collision_r + player.radius
     if d2 < min_d * min_d
+      altar_dx = player.x - args.state.altar_x
+      altar_dy = player.y - args.state.altar_y
+      next if altar_dx * altar_dx + altar_dy * altar_dy < Cave::ALTAR_RADIUS * Cave::ALTAR_RADIUS
       dmg = b.tier == 3 ? 2 : 1
       was_inv = player.invincible?
       player.take_hit(damage: dmg)
@@ -240,11 +330,42 @@ def calc(args)
     player.recover_sanity(0.03)
   end
 
-  args.state.game_over = true if player.dead?
+  if player.dead? && !args.state.game_over
+    args.state.game_over = true
+    args.state.death_cause = player.sanity <= 0 ? :insanity : :consumed
+  end
 
-  return unless args.state.boids.length < MAX_SHOGGOTHS && Kernel.tick_count % SPAWN_INTERVAL == 0
+  args.state.elapsed_ticks += 1
+  interval = effective_spawn_interval(args)
+  return unless args.state.boids.length < MAX_SHOGGOTHS && Kernel.tick_count % interval == 0
 
   spawn_shoggoth(args)
+end
+
+# Backfill modifier-derived state if a hot-reload landed mid-run with the new
+# fields missing. Safe to call every tick — values are only assigned when nil.
+def ensure_modifier_state(args)
+  args.state.modifiers          ||= []
+  args.state.modifier_keys      ||= []
+  args.state.large_for_win      ||= LARGE_FOR_WIN
+  args.state.ritual_speed       ||= 1.0
+  args.state.boid_speed_mult    ||= 1.0
+  args.state.spawn_scale        ||= 1.0
+  args.state.hunter_cap_bonus   ||= 0
+  args.state.allow_watchers       = false if args.state.allow_watchers.nil?
+  args.state.elapsed_ticks      ||= 0
+end
+
+def effective_spawn_interval(args)
+  base = (SPAWN_INTERVAL * args.state.spawn_scale).to_i
+  steps = args.state.elapsed_ticks.idiv(ESCALATE_INTERVAL)
+  [base - steps * ESCALATE_STEP, SPAWN_INTERVAL_MIN].max
+end
+
+def effective_hunter_cap(args)
+  base = MAX_HUNTERS + args.state.hunter_cap_bonus
+  steps = args.state.elapsed_ticks.idiv(ESCALATE_INTERVAL)
+  [base + steps, MAX_HUNTERS_CAP + args.state.hunter_cap_bonus].min
 end
 
 def spawn_shoggoth(args)
@@ -330,11 +451,38 @@ def check_win(args)
   pdy = args.state.player.y - ay
   player_at_altar = pdx * pdx + pdy * pdy < Cave::ALTAR_RADIUS * Cave::ALTAR_RADIUS
 
-  if large_at_altar >= LARGE_FOR_WIN && player_at_altar
-    args.state.summon_ticks += 1
+  if large_at_altar >= args.state.large_for_win
+    # Large shoggoths charge ritual on their own; player presence doubles rate
+    charge = (player_at_altar ? 2 : 1) * args.state.ritual_speed
+    args.state.summon_ticks += charge
     args.state.sound.play(args, :ritual_tick) if args.state.summon_ticks % 60 == 0
-    if Kernel.tick_count % 4 == 0
-      emit_particles(args, ax, ay, 3, r: 160 + rand(60), g: 40, b: 240 + rand(15), speed: 1.2 + rand * 0.8, size: 5)
+
+    # Orbiting ring of particles around the altar
+    pct = args.state.summon_ticks.to_f / SUMMON_TICKS_NEEDED
+    orbit_r = Cave::ALTAR_RADIUS * 0.9
+    num_emitters = 6
+    num_emitters.times do |i|
+      angle = (Kernel.tick_count * 0.04 + i * Math::PI * 2 / num_emitters) % (Math::PI * 2)
+      ex = ax + Math.cos(angle) * orbit_r
+      ey = ay + Math.sin(angle) * orbit_r
+      pr = (140 + rand(80)).clamp(0, 255)
+      pb = (220 + rand(35)).clamp(0, 255)
+      emit_particles(args, ex, ey, 2, r: pr, g: 20 + (pct * 60).to_i, b: pb, speed: 0.8 + pct * 1.2, size: 4 + (pct * 4).to_i)
+    end
+    # Inward-rushing bursts
+    if Kernel.tick_count % 8 == 0
+      burst_angle = rand * Math::PI * 2
+      bx = ax + Math.cos(burst_angle) * (orbit_r * 1.5)
+      by = ay + Math.sin(burst_angle) * (orbit_r * 1.5)
+      dx = ax - bx; dy = ay - by
+      mag = Math.sqrt(dx * dx + dy * dy)
+      speed = 1.5 + pct * 2.0
+      args.state.particles << {
+        x: bx, y: by, w: 6, h: 6,
+        dx: dx / mag * speed, dy: dy / mag * speed,
+        a: 220, path: :solid,
+        r: (180 + rand(75)).clamp(0, 255), g: 30, b: 255, blendmode_enum: 1
+      }
     end
     if args.state.summon_ticks >= SUMMON_TICKS_NEEDED
       args.state.won = true
@@ -345,7 +493,6 @@ def check_win(args)
       end
     end
   else
-    # Drain slowly if not holding
     args.state.summon_ticks = [args.state.summon_ticks - 2, 0].max
   end
 end
@@ -364,13 +511,23 @@ def intro_screen(args)
                            alignment_enum: 1, size_enum: 0, r: 200, g: 200, b: 200, a: 255 }
   args.outputs.labels << { x: 640, y: 350, text: '8 small shoggoths merge near an idol. 4 medium ones merge into a large. March them to the altar.',
                            alignment_enum: 1, size_enum: 0, r: 200, g: 200, b: 200, a: 255 }
-  args.outputs.labels << { x: 640, y: 320, text: 'Hold the altar with 2 great ones to complete the ritual.',
+  args.outputs.labels << { x: 640, y: 320, text: 'Three great ones at the altar will begin the ritual. Stand with them to hasten it.',
                            alignment_enum: 1, size_enum: 0, r: 200, g: 200, b: 200, a: 255 }
   args.outputs.labels << { x: 640, y: 270, text: '[ E ] Repel — blasts shoggoths and hunters back',
                            alignment_enum: 1, size_enum: 0, r: 180, g: 160, b: 200, a: 255 }
   args.outputs.labels << { x: 640, y: 245, text: 'Inquisitors will hunt your idols. Stay calm. Your sanity will not hold forever.',
                            alignment_enum: 1, size_enum: 0, r: 160, g: 100, b: 140, a: 255 }
-  args.outputs.labels << { x: 640, y: 170, text: 'press any key to begin',
+
+  args.outputs.labels << { x: 640, y: 215, text: 'OMENS OF THIS NIGHT',
+                           alignment_enum: 1, size_enum: 1, r: 220, g: 180, b: 100, a: 255 }
+  (args.state.modifiers || []).each_with_index do |m, i|
+    args.outputs.labels << { x: 640, y: 195 - i * 18,
+                             text: "#{m[:label]} — #{m[:desc]}",
+                             alignment_enum: 1, size_enum: -1,
+                             r: 255, g: 220, b: 140, a: 240 }
+  end
+
+  args.outputs.labels << { x: 640, y: 130, text: 'press any key to begin',
                            alignment_enum: 1, size_enum: 0, r: 120, g: 120, b: 140, a: (Math.sin(Kernel.tick_count * 0.06) * 80 + 170).to_i }
   kd = args.inputs.keyboard.key_down
   if kd.space || kd.enter || kd.e || kd.w || kd.a || kd.s || kd.d ||
@@ -386,11 +543,14 @@ def game_over_screen(args)
   return false unless args.state.game_over
 
   render_base(args)
-  args.outputs.labels << { x: 640, y: 400, text: 'YOU HAVE BEEN CONSUMED',
+  death_text = args.state.death_cause == :insanity ? 'YOU HAVE GONE INSANE' : 'YOU HAVE BEEN CONSUMED'
+  args.outputs.labels << { x: 640, y: 400, text: death_text,
                            alignment_enum: 1, size_enum: 8, r: 255, g: 50, b: 50, a: 255 }
-  args.outputs.labels << { x: 640, y: 355, text: 'click to restart',
+  args.outputs.labels << { x: 640, y: 355, text: 'press any key or click to restart',
                            alignment_enum: 1, r: 200, g: 200, b: 200, a: 255 }
-  if args.inputs.mouse.click
+  kd = args.inputs.keyboard.key_down
+  if args.inputs.mouse.click || kd.space || kd.enter || kd.e ||
+     kd.w || kd.a || kd.s || kd.d || kd.up || kd.down || kd.left || kd.right
     args.state.sound.stop_all_music(args)
     args.state = {}
   end
@@ -410,7 +570,7 @@ def win_screen(args)
 
   # Emit purple particles from Cthulhu position while visible
   if age > 30 && age % 3 == 0
-    emit_particles(args, 640, 320, 3, r: 120 + rand(80), g: 20, b: 220 + rand(35), speed: 2.5, size: 5)
+    emit_particles(args, 640, 400, 3, r: 120 + rand(80), g: 20, b: 220 + rand(35), speed: 2.5, size: 5)
   end
   args.state.particles.each { |p| p[:x] += p[:dx]; p[:y] += p[:dy]; p[:dx] *= 0.93; p[:dy] *= 0.93; p[:a] -= 5 }
   args.state.particles.reject! { |p| p[:a] <= 0 }
@@ -419,7 +579,7 @@ def win_screen(args)
   # Choose animation: attack after 3 seconds
   anim = age > 180 ? args.state.cthulhu_attack : args.state.cthulhu_idle
   if anim
-    sprite = anim.sprite(Kernel.tick_count, anchor_x: 640, anchor_y: 320, scale: 4.0)
+    sprite = anim.sprite(Kernel.tick_count, anchor_x: 640, anchor_y: 400, scale: 2.5)
     sprite_a = [age * 4, 255].min
     sprite[:a] = sprite_a
     args.outputs.sprites << sprite
@@ -436,9 +596,11 @@ def win_screen(args)
                            alignment_enum: 1, size_enum: 4, r: 220, g: 160, b: 255, a: text_a }
   args.outputs.labels << { x: 640, y: 120, text: "Ritual completed in #{time_str}",
                            alignment_enum: 1, size_enum: 1, r: 180, g: 140, b: 255, a: text_a }
-  args.outputs.labels << { x: 640, y: 80, text: 'click to play again',
+  args.outputs.labels << { x: 640, y: 80, text: 'press any key or click to play again',
                            alignment_enum: 1, r: 140, g: 140, b: 160, a: text_a }
-  if args.inputs.mouse.click
+  kd = args.inputs.keyboard.key_down
+  if args.inputs.mouse.click || kd.space || kd.enter || kd.e ||
+     kd.w || kd.a || kd.s || kd.d || kd.up || kd.down || kd.left || kd.right
     args.state.sound.stop_all_music(args)
     args.state = {}
   end
@@ -497,7 +659,8 @@ end
 def tick_hunters(args)
   player = args.state.player
   args.state.hunter_timer += 1
-  if args.state.hunter_timer >= HUNTER_SPAWN_INTERVAL && args.state.hunters.length < MAX_HUNTERS
+  cap = effective_hunter_cap(args)
+  if args.state.hunter_timer >= HUNTER_SPAWN_INTERVAL && args.state.hunters.length < cap
     args.state.hunter_timer = 0
     spawn_hunter(args)
   end
@@ -505,18 +668,34 @@ def tick_hunters(args)
   placed_idols = args.state.idols.select { |i| i[:placed] }
 
   args.state.hunters.each do |h|
-    target = placed_idols.empty? ? { x: player.x, y: player.y } :
-             placed_idols.min_by { |i| (i[:x] - h.x)**2 + (i[:y] - h.y)**2 }
+    if h.kind == :watcher
+      # Watcher slowly drifts toward player but its real threat is the aura
+      target = { x: player.x, y: player.y }
+    else
+      target = placed_idols.empty? ? { x: player.x, y: player.y } :
+               placed_idols.min_by { |i| (i[:x] - h.x)**2 + (i[:y] - h.y)**2 }
+    end
     h.update(target[:x], target[:y], args.state.cave_grid)
     h.x, h.y = resolve_prop_collisions(h.x, h.y, Hunter::RADIUS, args.state.prop_colliders)
 
-    args.state.idols.each do |idol|
-      next unless idol[:placed]
-      dx = h.x - idol[:x]; dy = h.y - idol[:y]
-      next unless dx * dx + dy * dy < (Hunter::RADIUS + 14)**2
-      idol[:placed] = false
-      player.idols_held += 1
-      emit_particles(args, idol[:x], idol[:y], 14, r: 255, g: 100, b: 20, speed: 2.5, size: 5)
+    # Watcher aura drains sanity when player is inside its radius
+    if h.kind == :watcher
+      dx = player.x - h.x; dy = player.y - h.y
+      if dx * dx + dy * dy < Hunter::WATCHER_AURA_R * Hunter::WATCHER_AURA_R
+        player.drain_sanity(Hunter::WATCHER_SANITY_DRAIN)
+      end
+    end
+
+    # Only Inquisitors steal idols; Watchers ignore them
+    if h.kind != :watcher
+      args.state.idols.each do |idol|
+        next unless idol[:placed]
+        dx = h.x - idol[:x]; dy = h.y - idol[:y]
+        next unless dx * dx + dy * dy < (Hunter::RADIUS + 14)**2
+        idol[:placed] = false
+        player.idols_held += 1
+        emit_particles(args, idol[:x], idol[:y], 14, r: 255, g: 100, b: 20, speed: 2.5, size: 5)
+      end
     end
 
     dx = h.x - player.x; dy = h.y - player.y
@@ -539,10 +718,12 @@ def spawn_hunter(args)
   end
   col, row = (far.empty? ? args.state.floor_cells : far).sample
   return unless col
+  kind = (args.state.allow_watchers && rand < 0.4) ? :watcher : :inquisitor
   args.state.hunters << Hunter.new(
     x: col * Cave::TILE_SIZE + Cave::TILE_SIZE / 2,
     y: row * Cave::TILE_SIZE + Cave::TILE_SIZE / 2,
-    animator: args.state.hunter_animator_factory.call
+    animator: args.state.hunter_animator_factory.call,
+    kind: kind
   )
 end
 
@@ -555,6 +736,7 @@ end
 
 def render(args)
   args.outputs.sprites << args.state.bg_sprites
+  render_corruption(args)
   render_altar(args)
   render_idols(args)
 
@@ -570,6 +752,26 @@ def render(args)
   end
 
   render_hud(args)
+end
+
+def render_corruption(args)
+  stage = args.state.ritual_stage
+  return if stage <= 0
+  pulse = Math.sin(Kernel.tick_count * 0.03) * 0.5 + 0.5
+  a = (stage * 22 + pulse * 14).to_i
+  args.outputs.sprites << {
+    x: 0, y: 0, w: 1280, h: 720, path: :solid,
+    r: 80, g: 10, b: 110, a: a, blendmode_enum: 1
+  }
+  # Low-sanity vignette — pulls in as sanity drops
+  sp = args.state.player.sanity_pct
+  if sp < 0.5
+    sv = ((0.5 - sp) * 2).clamp(0, 1)
+    args.outputs.sprites << {
+      x: 0, y: 0, w: 1280, h: 720, path: :solid,
+      r: 30, g: 0, b: 0, a: (sv * 100).to_i, blendmode_enum: 1
+    }
+  end
 end
 
 ALTAR_SPRITE_W = 80
@@ -640,13 +842,24 @@ def render_hud(args)
   args.state.boids.each { |b| counts[b.tier - 1] += 1 }
 
   hunter_str = args.state.hunters.length > 0 ? "  Hunters: #{args.state.hunters.length}" : ''
+  secs = (args.state.elapsed_ticks || 0).idiv(60)
+  time_str = "#{secs.idiv(60)}:#{(secs % 60).to_s.rjust(2, '0')}"
   args.outputs.labels << {
     x: 10, y: 710,
-    text: "Idols: #{player.idols_held}  HP: #{player.hp}  " \
-          "Small: #{counts[0]}  Medium: #{counts[1]}  Large: #{counts[2]}" \
+    text: "T #{time_str}  Idols: #{player.idols_held}  HP: #{player.hp}  " \
+          "Small: #{counts[0]}  Medium: #{counts[1]}  Large: #{counts[2]}/#{args.state.large_for_win}" \
           "#{hunter_str}  FPS: #{args.gtk.current_framerate.to_i}",
     r: 255, g: 255, b: 255, a: 255
   }
+
+  # Modifier reminders bottom-center
+  (args.state.modifiers || []).each_with_index do |m, i|
+    args.outputs.labels << {
+      x: 640, y: 18 + i * 14, text: m[:label],
+      alignment_enum: 1, size_enum: -3,
+      r: 200, g: 180, b: 120, a: 200
+    }
+  end
 
   # Sanity bar (top-right)
   san_w = 120

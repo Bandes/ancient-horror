@@ -56,36 +56,38 @@ module WalkFrames
 end
 
 module CthulhuFrames
-  # chthulu.png: 2880x784, cell_w=180, top-left tile origin.
-  # Idle: row 1 (y=33), 16 frames. Attack: row 5 (y=365), 8 frames.
+  # chthulu.png: 2880x784, cell_w=180, cell_h=196, 4 rows, top-left origin.
+  # Idle: row 0, 16 frames. Body SWAYS across each cell — cx_off is measured
+  # body center per frame (not bbox center). cy_off=32 anchors to face/head.
+  # Attack: row 2, 8 frames.
   IDLE = [
-    { x:   64, y: 33, w:  60, h: 63, cx_off: 30, cy_off: 31 },
-    { x:  256, y: 33, w:  60, h: 63, cx_off: 30, cy_off: 31 },
-    { x:  448, y: 33, w:  60, h: 63, cx_off: 30, cy_off: 31 },
-    { x:  640, y: 33, w:  60, h: 63, cx_off: 30, cy_off: 31 },
-    { x:  832, y: 33, w:  60, h: 63, cx_off: 30, cy_off: 31 },
-    { x: 1024, y: 32, w:  56, h: 64, cx_off: 28, cy_off: 32 },
-    { x: 1080, y: 32, w: 180, h: 64, cx_off: 90, cy_off: 32 },
-    { x: 1260, y: 32, w: 179, h: 64, cx_off: 89, cy_off: 32 },
-    { x: 1443, y: 33, w: 177, h: 63, cx_off: 88, cy_off: 31 },
-    { x: 1620, y: 32, w: 180, h: 64, cx_off: 90, cy_off: 32 },
-    { x: 1800, y: 32, w:  52, h: 64, cx_off: 26, cy_off: 32 },
-    { x: 1984, y: 33, w:  60, h: 63, cx_off: 30, cy_off: 31 },
-    { x: 2176, y: 33, w:  60, h: 63, cx_off: 30, cy_off: 31 },
-    { x: 2368, y: 33, w:  60, h: 63, cx_off: 30, cy_off: 31 },
-    { x: 2560, y: 33, w:  60, h: 63, cx_off: 30, cy_off: 31 },
-    { x: 2752, y: 33, w:  60, h: 63, cx_off: 30, cy_off: 31 },
+    { x:   64, y: 33, w:  60, h: 163, cx_off:  28, cy_off: 32 },
+    { x:  256, y: 33, w:  60, h: 162, cx_off:  28, cy_off: 32 },
+    { x:  448, y: 33, w:  60, h: 162, cx_off:  28, cy_off: 32 },
+    { x:  640, y: 33, w:  60, h: 163, cx_off:  28, cy_off: 32 },
+    { x:  832, y: 33, w:  60, h: 163, cx_off:  28, cy_off: 32 },
+    { x: 1024, y: 32, w:  56, h: 164, cx_off:  27, cy_off: 32 },
+    { x: 1080, y: 32, w: 180, h: 164, cx_off: 151, cy_off: 32 },
+    { x: 1260, y: 32, w: 180, h: 164, cx_off: 127, cy_off: 32 },
+    { x: 1443, y: 33, w: 177, h: 163, cx_off:  89, cy_off: 32 },
+    { x: 1620, y: 32, w: 180, h: 164, cx_off:  48, cy_off: 32 },
+    { x: 1800, y: 32, w:  52, h: 164, cx_off:  23, cy_off: 32 },
+    { x: 1984, y: 33, w:  60, h: 163, cx_off:  28, cy_off: 32 },
+    { x: 2176, y: 33, w:  60, h: 163, cx_off:  28, cy_off: 32 },
+    { x: 2368, y: 33, w:  60, h: 163, cx_off:  28, cy_off: 32 },
+    { x: 2560, y: 33, w:  60, h: 163, cx_off:  28, cy_off: 32 },
+    { x: 2752, y: 33, w:  60, h: 163, cx_off:  29, cy_off: 32 },
   ].freeze
 
   ATTACK = [
-    { x:   66, y: 365, w:  62, h: 67, cx_off: 31, cy_off: 33 },
-    { x:  252, y: 367, w:  53, h: 65, cx_off: 26, cy_off: 32 },
-    { x:  438, y: 367, w: 102, h: 65, cx_off: 51, cy_off: 32 },
-    { x:  540, y: 369, w: 180, h: 63, cx_off: 90, cy_off: 31 },
-    { x:  720, y: 370, w: 180, h: 62, cx_off: 90, cy_off: 31 },
-    { x:  900, y: 370, w: 180, h: 62, cx_off: 90, cy_off: 31 },
-    { x: 1080, y: 369, w: 180, h: 63, cx_off: 90, cy_off: 31 },
-    { x: 1260, y: 370, w:  17, h: 51, cx_off:  8, cy_off: 25 },
+    { x:   54, y: 392, w:  74, h: 152, cx_off:  34, cy_off: 32 },
+    { x:  245, y: 392, w:  65, h: 152, cx_off:  36, cy_off: 32 },
+    { x:  438, y: 392, w: 102, h: 151, cx_off:  56, cy_off: 32 },
+    { x:  540, y: 392, w: 180, h: 151, cx_off:  80, cy_off: 32 },
+    { x:  720, y: 392, w: 178, h: 151, cx_off:  47, cy_off: 32 },
+    { x:  900, y: 392, w: 180, h: 151, cx_off:  54, cy_off: 32 },
+    { x: 1083, y: 392, w: 177, h: 151, cx_off:  63, cy_off: 32 },
+    { x: 1260, y: 394, w: 180, h: 149, cx_off:  90, cy_off: 32 },
   ].freeze
 end
 
