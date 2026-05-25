@@ -36,6 +36,8 @@ class Sound
     },
   }.freeze
 
+  attr_accessor :music_vol, :sfx_vol
+
   def initialize(gtk)
     @available = {}
     ['sounds', 'sounds/effects', 'sounds/music'].each do |dir|
@@ -46,25 +48,40 @@ class Sound
       hiss:      300 + rand(300),
       roar:      480 + rand(480),
     }
+    @music_vol   = 1.0
+    @sfx_vol     = 0.5
+    @sfx_enabled = false
   end
 
+  attr_accessor :sfx_enabled
+
   def play(args, key)
+    return unless @sfx_enabled
     path = SFX[key]
     return unless path && available?(path)
-    args.outputs.sounds << path
+    args.outputs.sounds << { path: path, gain: @sfx_vol }
   end
 
   def play_gain(args, key, gain: 1.0)
+    return unless @sfx_enabled
     path = SFX[key]
     return unless path && available?(path)
-    args.outputs.sounds << { path: path, gain: gain }
+    args.outputs.sounds << { path: path, gain: gain * @sfx_vol }
   end
 
-  def start_music(args, key, gain: 0.7)
+  def start_music(args, key, base_gain: 0.8)
     path = MUSIC[key]
     return unless path && available?(path)
     return if args.audio[key]
-    args.audio[key] = { input: path, looping: true, gain: gain, pitch: 1.0, paused: false }
+    args.audio[key] = { input: path, looping: true, gain: base_gain * @music_vol,
+                        base_gain: base_gain, pitch: 1.0, paused: false }
+  end
+
+  def apply_music_vol(args)
+    args.audio.each do |_id, track|
+      next unless track.is_a?(Hash) && !track[:decay_rate]
+      track[:gain] = (track[:base_gain] || 0.8) * @music_vol
+    end
   end
 
   def stop_music(args, key)
@@ -100,8 +117,9 @@ class Sound
     AMBIENT_GROUPS.each do |key, group|
       @ambient_timers[key] -= 1
       next if @ambient_timers[key] > 0
+      next unless @sfx_enabled
       avail = group[:paths].select { |p| available?(p) }
-      args.outputs.sounds << avail.sample unless avail.empty?
+      args.outputs.sounds << { path: avail.sample, gain: @sfx_vol } unless avail.empty?
       @ambient_timers[key] = group[:min_interval] + rand(group[:max_interval] - group[:min_interval])
     end
   end

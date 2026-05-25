@@ -270,8 +270,9 @@ module Cave
     wall?(grid, px.idiv(TILE_SIZE), py.idiv(TILE_SIZE))
   end
 
-  # Like wall_at_px? but accounts for the walkable floor-bleed strip on edge tiles.
-  WALL_BLEED = 20
+  # Edge wall tiles render a thin stone-brick "face" strip on the side OPPOSITE
+  # the adjacent floor; rest of tile is dark floor-bleed and walkable.
+  STONE_FACE_PX = 20
 
   def self.blocks_movement?(grid, px, py)
     col = px.idiv(TILE_SIZE)
@@ -288,19 +289,16 @@ module Cave
     fe = col < COLS - 1 && grid[row][col + 1] != :wall
     fw = col > 0        && grid[row][col - 1] != :wall
 
-    floor_faces = (fs ? 1 : 0) + (fn ? 1 : 0) + (fe ? 1 : 0) + (fw ? 1 : 0)
-    # Interior walls (floor on 2+ sides) are fully solid.
-    # Bleed only applies to single-face walls (outer border sides).
-    return true if floor_faces >= 2
-
+    # Interior wall renders bricks on side TOWARD floor neighbor (see wall_tile
+    # precedence: s,n,e,w). Block only the brick strip; rest is walkable bleed.
     if fs
-      ly >= WALL_BLEED
+      ly < STONE_FACE_PX
     elsif fn
-      ly < TILE_SIZE - WALL_BLEED
+      ly >= TILE_SIZE - STONE_FACE_PX
     elsif fe
-      lx < TILE_SIZE - WALL_BLEED
+      lx >= TILE_SIZE - STONE_FACE_PX
     elsif fw
-      lx >= WALL_BLEED
+      lx < STONE_FACE_PX
     else
       true
     end

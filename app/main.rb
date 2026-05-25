@@ -17,7 +17,7 @@ STARTING_IDOLS        = 2     # idols on hand at run start
 
 # Escalation: every ESCALATE_INTERVAL ticks the spawn interval shrinks by
 # ESCALATE_STEP (clamped to SPAWN_INTERVAL_MIN) and one extra hunter slot opens.
-ESCALATE_INTERVAL    = 3600   # 60s
+ESCALATE_INTERVAL    = 3600 # 60s
 ESCALATE_STEP        = 40
 SPAWN_INTERVAL_MIN   = 120
 MAX_HUNTERS_CAP      = 6
@@ -47,12 +47,24 @@ def tick(args)
   return if intro_screen(args)
   return if game_over_screen(args) || win_screen(args)
 
+  if args.inputs.keyboard.key_down.escape
+    args.state.paused = !args.state.paused
+    args.state.pause_sel ||= 0
+  end
+
+  if args.state.paused
+    render(args)
+    pause_menu(args)
+    return
+  end
+
   handle_input(args)
   calc(args)
   check_merge(args)
   check_infighting(args)
   check_win(args)
   tick_hunters(args)
+  emit_flow_particles(args)
   tick_particles(args)
   render(args)
 end
@@ -61,7 +73,10 @@ def defaults(args)
   ensure_modifier_state(args)
   return if args.state.initialized
 
-  modifiers = MODIFIER_POOL.shuffle.first(MODIFIER_PICK)
+  modifiers = []
+  3.times do
+    modifiers << MODIFIER_POOL.sample
+  end
   args.state.modifiers     = modifiers
   args.state.modifier_keys = modifiers.map { |m| m[:key] }
   mk = args.state.modifier_keys
@@ -97,7 +112,7 @@ def defaults(args)
   args.state.boid_speed_mult = mk.include?(:eager)     ? 1.25 : 1.0
   args.state.spawn_scale     = mk.include?(:dread_pace) ? 0.5 : 1.0
   args.state.hunter_cap_bonus = mk.include?(:hunter_swarm) ? 2 : 0
-  args.state.allow_watchers  = mk.include?(:watcher_kin)
+  args.state.allow_watchers = mk.include?(:watcher_kin)
 
   args.state.animator_factory = lambda {
     SpriteAnimator.new(
@@ -117,8 +132,10 @@ def defaults(args)
     )
   }
 
-  args.state.cthulhu_idle   = SpriteAnimator.new(path: 'sprites/chthulu.png', frames: CthulhuFrames::IDLE,   frame_duration: 8)
-  args.state.cthulhu_attack = SpriteAnimator.new(path: 'sprites/chthulu.png', frames: CthulhuFrames::ATTACK, frame_duration: 7)
+  args.state.cthulhu_idle   = SpriteAnimator.new(path: 'sprites/chthulu.png', frames: CthulhuFrames::IDLE,
+                                                 frame_duration: 8)
+  args.state.cthulhu_attack = SpriteAnimator.new(path: 'sprites/chthulu.png', frames: CthulhuFrames::ATTACK,
+                                                 frame_duration: 7)
 
   args.state.boids = Flock.spawn(
     CREATURE_COUNT,
@@ -148,7 +165,8 @@ def defaults(args)
     (c == cave_data[:spawn_col] && r == cave_data[:spawn_row]) ||
       (c == cave_data[:altar_col] && r == cave_data[:altar_row])
   end
-  player_px = spawn[:x]; player_py = spawn[:y]
+  player_px = spawn[:x]
+  player_py = spawn[:y]
   far = scatter_cells.select do |c, r|
     px = c * Cave::TILE_SIZE + Cave::TILE_SIZE / 2
     py = r * Cave::TILE_SIZE + Cave::TILE_SIZE / 2
@@ -158,6 +176,7 @@ def defaults(args)
   placed_idol_cells = []
   scatter_count.times do |i|
     next if pool.empty?
+
     candidates = pool.reject do |c, r|
       placed_idol_cells.any? { |pc, pr| (pc - c).abs + (pr - r).abs < 4 }
     end
@@ -173,6 +192,8 @@ def defaults(args)
   args.state.sound         = Sound.new(args.gtk)
   args.state.intro         = true
   args.state.start_tick    = nil
+  args.state.paused        = false
+  args.state.pause_sel     = 0
   args.state.initialized   = true
 end
 
@@ -230,32 +251,72 @@ def calc(args)
   player = args.state.player
   player.tick_repel
 
-  # Repel: E key blasts nearby shoggoths away
+  # Repel: E key blasts nearby shoggoths away; inner kill zone destroys/splits them
   if args.inputs.keyboard.key_down.e && player.repel_ready?
     player.repel!(Kernel.tick_count)
     args.state.sound.play(args, :repel)
-    repel_r_sq = Player::REPEL_RADIUS**2
+    repel_r_sq      = Player::REPEL_RADIUS**2
+    kill_r_sq       = Player::REPEL_KILL_RADIUS**2
+    destroyed_boids = []
+    spawned_boids   = []
+
     args.state.boids.each do |b|
       dx = b.x - player.x
       dy = b.y - player.y
       d2 = dx * dx + dy * dy
       next if d2 > repel_r_sq || d2 < 0.0001
 
-      d     = Math.sqrt(d2)
-      force = Player::REPEL_FORCE * (1.0 - d / Player::REPEL_RADIUS)
-      b.vx += dx / d * force
-      b.vy += dy / d * force
+      d = Math.sqrt(d2)
+
+      if d2 < kill_r_sq
+        if b.tier == 1
+          destroyed_boids << b
+          emit_particles(args, b.x, b.y, 14, r: 40, g: 220, b: 80, speed: 3.0, size: 5)
+        elsif b.tier == 2
+          # Split medium back into two smalls
+          destroyed_boids << b
+          2.times do |_i|
+            angle = rand * Math::PI * 2
+            spawned_boids << Boid.new(
+              x: b.x + Math.cos(angle) * 18, y: b.y + Math.sin(angle) * 18,
+              vx: (dx / d * Player::REPEL_FORCE * 2.0) + Math.cos(angle) * 0.5,
+              vy: (dy / d * Player::REPEL_FORCE * 2.0) + Math.sin(angle) * 0.5,
+              bias_x: dx / d, bias_y: dy / d,
+              animator: args.state.animator_factory.call,
+              personality: { speed_scale: 0.8 + rand * 0.4, wander_scale: 0.8, bias_scale: 0.6 },
+              tier: 1
+            )
+          end
+          emit_particles(args, b.x, b.y, 20, r: 80, g: 255, b: 120, speed: 3.5, size: 6)
+        else
+          # Tier 3 just takes a massive shove
+          force = Player::REPEL_FORCE * 3.5 * (1.0 - d / Player::REPEL_RADIUS)
+          b.vx += dx / d * force
+          b.vy += dy / d * force
+        end
+      else
+        force = Player::REPEL_FORCE * 2.0 * (1.0 - d / Player::REPEL_RADIUS)
+        b.vx += dx / d * force
+        b.vy += dy / d * force
+      end
     end
+
+    args.state.boids -= destroyed_boids unless destroyed_boids.empty?
+    args.state.boids.concat(spawned_boids) unless spawned_boids.empty?
+
     args.state.hunters.each do |h|
-      dx = h.x - player.x; dy = h.y - player.y
+      dx = h.x - player.x
+      dy = h.y - player.y
       d2 = dx * dx + dy * dy
       next if d2 > repel_r_sq || d2 < 0.0001
+
       d = Math.sqrt(d2)
-      force = Player::REPEL_FORCE * 1.5 * (1.0 - d / Player::REPEL_RADIUS)
-      h.vx += dx / d * force; h.vy += dy / d * force
+      force = Player::REPEL_FORCE * 2.5 * (1.0 - d / Player::REPEL_RADIUS)
+      h.vx += dx / d * force
+      h.vy += dy / d * force
       h.take_hit
     end
-    args.state.repel_flash = 8
+    args.state.repel_flash = 14
   end
   args.state.repel_flash = [(args.state.repel_flash || 0) - 1, 0].max
 
@@ -313,15 +374,16 @@ def calc(args)
     next if player.invincible?
 
     min_d = b.collision_r + player.radius
-    if d2 < min_d * min_d
-      altar_dx = player.x - args.state.altar_x
-      altar_dy = player.y - args.state.altar_y
-      next if altar_dx * altar_dx + altar_dy * altar_dy < Cave::ALTAR_RADIUS * Cave::ALTAR_RADIUS
-      dmg = b.tier == 3 ? 2 : 1
-      was_inv = player.invincible?
-      player.take_hit(damage: dmg)
-      args.state.sound.play(args, :player_hit) if !was_inv && player.invincible?
-    end
+    next unless d2 < min_d * min_d
+
+    altar_dx = player.x - args.state.altar_x
+    altar_dy = player.y - args.state.altar_y
+    next if altar_dx * altar_dx + altar_dy * altar_dy < Cave::ALTAR_RADIUS * Cave::ALTAR_RADIUS
+
+    dmg = b.tier == 3 ? 2 : 1
+    was_inv = player.invincible?
+    player.take_hit(damage: dmg)
+    args.state.sound.play(args, :player_hit) if !was_inv && player.invincible?
   end
 
   if nearby_count > 0
@@ -465,31 +527,34 @@ def check_win(args)
       angle = (Kernel.tick_count * 0.04 + i * Math::PI * 2 / num_emitters) % (Math::PI * 2)
       ex = ax + Math.cos(angle) * orbit_r
       ey = ay + Math.sin(angle) * orbit_r
-      pr = (140 + rand(80)).clamp(0, 255)
-      pb = (220 + rand(35)).clamp(0, 255)
-      emit_particles(args, ex, ey, 2, r: pr, g: 20 + (pct * 60).to_i, b: pb, speed: 0.8 + pct * 1.2, size: 4 + (pct * 4).to_i)
+      pr = rand(140..219).clamp(0, 255)
+      pb = rand(220..254).clamp(0, 255)
+      emit_particles(args, ex, ey, 2, r: pr, g: 20 + (pct * 60).to_i, b: pb, speed: 0.8 + pct * 1.2,
+                                      size: 4 + (pct * 4).to_i)
     end
     # Inward-rushing bursts
     if Kernel.tick_count % 8 == 0
       burst_angle = rand * Math::PI * 2
       bx = ax + Math.cos(burst_angle) * (orbit_r * 1.5)
       by = ay + Math.sin(burst_angle) * (orbit_r * 1.5)
-      dx = ax - bx; dy = ay - by
+      dx = ax - bx
+      dy = ay - by
       mag = Math.sqrt(dx * dx + dy * dy)
       speed = 1.5 + pct * 2.0
       args.state.particles << {
         x: bx, y: by, w: 6, h: 6,
         dx: dx / mag * speed, dy: dy / mag * speed,
         a: 220, path: :solid,
-        r: (180 + rand(75)).clamp(0, 255), g: 30, b: 255, blendmode_enum: 1
+        r: rand(180..254).clamp(0, 255), g: 30, b: 255, blendmode_enum: 1
       }
     end
     if args.state.summon_ticks >= SUMMON_TICKS_NEEDED
       args.state.won = true
       if args.state.end_tick.nil?
         args.state.end_tick = Kernel.tick_count
+        args.state.sound.sfx_enabled = false
         args.state.sound.fade_out(args, :ambient, ticks: 90)
-        args.state.sound.start_music(args, :win, gain: 0.9)
+        args.state.sound.start_music(args, :win, base_gain: 0.9)
       end
     end
   else
@@ -505,7 +570,7 @@ def intro_screen(args)
                            alignment_enum: 1, size_enum: 10, r: 160, g: 80, b: 255, a: 255 }
   args.outputs.labels << { x: 640, y: 458, text: 'You are an acolyte of the Old Ones. Legend has it that one awaits deep beneath the earth.',
                            alignment_enum: 1, size_enum: 2, r: 180, g: 150, b: 220, a: 255 }
-  args.outputs.labels << { x: 640, y: 425, text: 'It is your job to awaken it and bring about a New Age. The stars align. The altar waits.',
+  args.outputs.labels << { x: 640, y: 425, text: 'It is your job to awaken it and Unmake the World. The stars align. The altar waits.',
                            alignment_enum: 1, size_enum: 2, r: 180, g: 150, b: 220, a: 255 }
   args.outputs.labels << { x: 640, y: 380, text: 'Place idols [ SPACE ] to lure shoggoths.',
                            alignment_enum: 1, size_enum: 0, r: 200, g: 200, b: 200, a: 255 }
@@ -534,6 +599,7 @@ def intro_screen(args)
      kd.up || kd.down || kd.left || kd.right || args.inputs.mouse.click
     args.state.intro = false
     args.state.start_tick = Kernel.tick_count
+    args.state.sound.sfx_enabled = true
     args.state.sound.start_music(args, :ambient)
   end
   true
@@ -570,9 +636,15 @@ def win_screen(args)
 
   # Emit purple particles from Cthulhu position while visible
   if age > 30 && age % 3 == 0
-    emit_particles(args, 640, 400, 3, r: 120 + rand(80), g: 20, b: 220 + rand(35), speed: 2.5, size: 5)
+    emit_particles(args, 640, 400, 3, r: rand(120..199), g: 20, b: rand(220..254), speed: 2.5, size: 5)
   end
-  args.state.particles.each { |p| p[:x] += p[:dx]; p[:y] += p[:dy]; p[:dx] *= 0.93; p[:dy] *= 0.93; p[:a] -= 5 }
+  args.state.particles.each do |p|
+    p[:x] += p[:dx]
+    p[:y] += p[:dy]
+    p[:dx] *= 0.93
+    p[:dy] *= 0.93
+    p[:a] -= 5
+  end
   args.state.particles.reject! { |p| p[:a] <= 0 }
   args.outputs.sprites << args.state.particles
 
@@ -621,8 +693,10 @@ end
 
 def tick_particles(args)
   args.state.particles.each do |p|
-    p[:x] += p[:dx]; p[:y] += p[:dy]
-    p[:dx] *= 0.93; p[:dy] *= 0.93
+    p[:x] += p[:dx]
+    p[:y] += p[:dy]
+    p[:dx] *= 0.93
+    p[:dy] *= 0.93
     p[:a]  -= 7
   end
   args.state.particles.reject! { |p| p[:a] <= 0 }
@@ -633,11 +707,15 @@ def check_infighting(args)
   eaten = []
   args.state.boids.each do |predator|
     next if predator.tier < 3
+
     eat_r = predator.collision_r - 4
     args.state.boids.each do |prey|
       next if prey.tier == 3 || eaten.include?(prey)
-      dx = predator.x - prey.x; dy = predator.y - prey.y
+
+      dx = predator.x - prey.x
+      dy = predator.y - prey.y
       next unless dx * dx + dy * dy < eat_r * eat_r
+
       eaten << prey
       emit_particles(args, prey.x, prey.y, 8, r: 80, g: 210, b: 80, speed: 1.5, size: 4)
     end
@@ -646,9 +724,11 @@ def check_infighting(args)
 
   args.state.hunters.reject! do |h|
     args.state.boids.any? do |b|
-      dx = b.x - h.x; dy = b.y - h.y
+      dx = b.x - h.x
+      dy = b.y - h.y
       eat_r = b.collision_r + Hunter::RADIUS - 6
       next unless dx * dx + dy * dy < eat_r * eat_r
+
       emit_particles(args, h.x, h.y, 10, r: 200, g: 20, b: 20, speed: 2.0, size: 5)
       args.state.sound.play(args, :hunter_die)
       true
@@ -668,19 +748,21 @@ def tick_hunters(args)
   placed_idols = args.state.idols.select { |i| i[:placed] }
 
   args.state.hunters.each do |h|
-    if h.kind == :watcher
-      # Watcher slowly drifts toward player but its real threat is the aura
-      target = { x: player.x, y: player.y }
-    else
-      target = placed_idols.empty? ? { x: player.x, y: player.y } :
+    target = if h.kind == :watcher
+               # Watcher slowly drifts toward player but its real threat is the aura
+               { x: player.x, y: player.y }
+             elsif placed_idols.empty?
+               { x: player.x, y: player.y }
+             else
                placed_idols.min_by { |i| (i[:x] - h.x)**2 + (i[:y] - h.y)**2 }
-    end
+             end
     h.update(target[:x], target[:y], args.state.cave_grid)
     h.x, h.y = resolve_prop_collisions(h.x, h.y, Hunter::RADIUS, args.state.prop_colliders)
 
     # Watcher aura drains sanity when player is inside its radius
     if h.kind == :watcher
-      dx = player.x - h.x; dy = player.y - h.y
+      dx = player.x - h.x
+      dy = player.y - h.y
       if dx * dx + dy * dy < Hunter::WATCHER_AURA_R * Hunter::WATCHER_AURA_R
         player.drain_sanity(Hunter::WATCHER_SANITY_DRAIN)
       end
@@ -690,20 +772,24 @@ def tick_hunters(args)
     if h.kind != :watcher
       args.state.idols.each do |idol|
         next unless idol[:placed]
-        dx = h.x - idol[:x]; dy = h.y - idol[:y]
+
+        dx = h.x - idol[:x]
+        dy = h.y - idol[:y]
         next unless dx * dx + dy * dy < (Hunter::RADIUS + 14)**2
+
         idol[:placed] = false
         player.idols_held += 1
         emit_particles(args, idol[:x], idol[:y], 14, r: 255, g: 100, b: 20, speed: 2.5, size: 5)
       end
     end
 
-    dx = h.x - player.x; dy = h.y - player.y
-    if dx * dx + dy * dy < (Hunter::RADIUS + player.radius)**2
-      was_inv = player.invincible?
-      player.take_hit
-      args.state.sound.play(args, :player_hit) if !was_inv && player.invincible?
-    end
+    dx = h.x - player.x
+    dy = h.y - player.y
+    next unless dx * dx + dy * dy < (Hunter::RADIUS + player.radius)**2
+
+    was_inv = player.invincible?
+    player.take_hit
+    args.state.sound.play(args, :player_hit) if !was_inv && player.invincible?
   end
 
   args.state.hunters.reject!(&:dead?)
@@ -718,7 +804,8 @@ def spawn_hunter(args)
   end
   col, row = (far.empty? ? args.state.floor_cells : far).sample
   return unless col
-  kind = (args.state.allow_watchers && rand < 0.4) ? :watcher : :inquisitor
+
+  kind = args.state.allow_watchers && rand < 0.4 ? :watcher : :inquisitor
   args.state.hunters << Hunter.new(
     x: col * Cave::TILE_SIZE + Cave::TILE_SIZE / 2,
     y: row * Cave::TILE_SIZE + Cave::TILE_SIZE / 2,
@@ -745,6 +832,13 @@ def render(args)
   args.outputs.sprites << (args.state.hunters || []).map { |h| h.render(Kernel.tick_count) }
   args.outputs.sprites << args.state.player.render(Kernel.tick_count, sanity_pct: args.state.player.sanity_pct)
 
+  # Repel flash — white-green shockwave feel
+  if (args.state.repel_flash || 0) > 0
+    a = (args.state.repel_flash * 12).clamp(0, 140)
+    args.outputs.sprites << { x: 0, y: 0, w: 1280, h: 720, path: :solid, r: 200, g: 255, b: 220, a: a,
+                              blendmode_enum: 1 }
+  end
+
   # Merge flash
   if (args.state.merge_flash || 0) > 0
     a = (args.state.merge_flash * 25).clamp(0, 120)
@@ -757,6 +851,7 @@ end
 def render_corruption(args)
   stage = args.state.ritual_stage
   return if stage <= 0
+
   pulse = Math.sin(Kernel.tick_count * 0.03) * 0.5 + 0.5
   a = (stage * 22 + pulse * 14).to_i
   args.outputs.sprites << {
@@ -765,13 +860,13 @@ def render_corruption(args)
   }
   # Low-sanity vignette — pulls in as sanity drops
   sp = args.state.player.sanity_pct
-  if sp < 0.5
-    sv = ((0.5 - sp) * 2).clamp(0, 1)
-    args.outputs.sprites << {
-      x: 0, y: 0, w: 1280, h: 720, path: :solid,
-      r: 30, g: 0, b: 0, a: (sv * 100).to_i, blendmode_enum: 1
-    }
-  end
+  return unless sp < 0.5
+
+  sv = ((0.5 - sp) * 2).clamp(0, 1)
+  args.outputs.sprites << {
+    x: 0, y: 0, w: 1280, h: 720, path: :solid,
+    r: 30, g: 0, b: 0, a: (sv * 100).to_i, blendmode_enum: 1
+  }
 end
 
 ALTAR_SPRITE_W = 80
@@ -821,8 +916,50 @@ IDOL_W = 41
 IDOL_H = 64
 
 def render_idols(args)
+  merge_r = Cave::MERGE_RADIUS
   args.state.idols.each do |idol|
     next unless idol[:placed]
+
+    # Count nearby shoggoths per tier
+    near_small = 0; near_medium = 0
+    args.state.boids.each do |b|
+      dx = b.x - idol[:x]; dy = b.y - idol[:y]
+      next if dx * dx + dy * dy > merge_r * merge_r
+      near_small  += 1 if b.tier == 1
+      near_medium += 1 if b.tier == 2
+    end
+
+    # Ring color: dim gray → bright green as closest tier approaches threshold
+    small_pct  = near_small.to_f  / Cave::MERGE_THRESHOLD_SMALL
+    medium_pct = near_medium.to_f / Cave::MERGE_THRESHOLD_MEDIUM
+    best_pct   = [small_pct, medium_pct, 0.0].max.clamp(0.0, 1.0)
+    ring_r = (60  + best_pct * 195).to_i.clamp(0, 255)
+    ring_g = (180 + best_pct * 75).to_i.clamp(0, 255)
+    ring_b = 60
+    ring_a = (55  + best_pct * 160).to_i.clamp(0, 255)
+
+    # Dashed ring: 32 dots around circumference
+    32.times do |i|
+      next if i.odd? && best_pct < 0.25  # sparse when nearly empty
+      angle = i * Math::PI * 2 / 32
+      rx = idol[:x] + Math.cos(angle) * merge_r
+      ry = idol[:y] + Math.sin(angle) * merge_r
+      args.outputs.sprites << { x: rx - 2, y: ry - 2, w: 4, h: 4, path: :solid,
+                                r: ring_r, g: ring_g, b: ring_b, a: ring_a, blendmode_enum: 1 }
+    end
+
+    # Count label beneath idol
+    parts = []
+    parts << "#{near_small}/#{Cave::MERGE_THRESHOLD_SMALL}s"  if near_small  > 0
+    parts << "#{near_medium}/#{Cave::MERGE_THRESHOLD_MEDIUM}m" if near_medium > 0
+    unless parts.empty?
+      args.outputs.labels << {
+        x: idol[:x], y: idol[:y] - IDOL_H / 2 - 4,
+        text: parts.join('  '),
+        alignment_enum: 1, size_enum: -3,
+        r: ring_r, g: ring_g, b: 100, a: 230
+      }
+    end
 
     pulse = (Math.sin(Kernel.tick_count * 0.12) * 30 + 220).to_i
     args.outputs.sprites << {
@@ -832,6 +969,101 @@ def render_idols(args)
       r: pulse, g: pulse, b: 80, a: 255, blendmode_enum: 1
     }
   end
+end
+
+def emit_flow_particles(args)
+  placed = args.state.idols.select { |i| i[:placed] }
+  return if placed.empty?
+
+  attract_r_sq = Flock::IDOL_ATTRACT_RADIUS_SQ
+  args.state.boids.each do |b|
+    next if Kernel.tick_count % 6 != b.object_id % 6
+
+    nearest = placed.min_by { |idol| (idol[:x] - b.x)**2 + (idol[:y] - b.y)**2 }
+    dx = nearest[:x] - b.x; dy = nearest[:y] - b.y
+    d2 = dx * dx + dy * dy
+    next if d2 > attract_r_sq || d2 < 28 * 28
+
+    d = Math.sqrt(d2)
+    speed = 1.6 + rand * 1.2
+    t = rand * 0.35
+    args.state.particles << {
+      x: b.x + dx * t, y: b.y + dy * t,
+      w: 3, h: 3,
+      dx: dx / d * speed * (0.6 + rand * 0.6),
+      dy: dy / d * speed * (0.6 + rand * 0.6),
+      a: 160 + rand(60), path: :solid,
+      r: 100 + rand(80), g: 200 + rand(55), b: 60, blendmode_enum: 1
+    }
+  end
+end
+
+def pause_menu(args)
+  sound = args.state.sound
+  sel   = args.state.pause_sel ||= 0
+  kd    = args.inputs.keyboard.key_down
+
+  sel = (sel - 1) % 2 if kd.up   || kd.w
+  sel = (sel + 1) % 2 if kd.down || kd.s
+  args.state.pause_sel = sel
+
+  step = 0.05
+  if kd.left || kd.a
+    if sel == 0
+      sound.music_vol = (sound.music_vol - step).clamp(0.0, 1.0).round(2)
+      sound.apply_music_vol(args)
+    else
+      sound.sfx_vol = (sound.sfx_vol - step).clamp(0.0, 1.0).round(2)
+    end
+  end
+  if kd.right || kd.d
+    if sel == 0
+      sound.music_vol = (sound.music_vol + step).clamp(0.0, 1.0).round(2)
+      sound.apply_music_vol(args)
+    else
+      sound.sfx_vol = (sound.sfx_vol + step).clamp(0.0, 1.0).round(2)
+    end
+  end
+
+  # Dark overlay
+  args.outputs.sprites << { x: 0, y: 0, w: 1280, h: 720, path: :solid,
+                            r: 0, g: 0, b: 0, a: 160 }
+
+  # Panel background + border
+  px = 440; py = 255; pw = 400; ph = 210
+  args.outputs.sprites  << { x: px, y: py, w: pw, h: ph, path: :solid,
+                             r: 12, g: 8, b: 28, a: 235 }
+  args.outputs.borders  << { x: px, y: py, w: pw, h: ph,
+                             r: 100, g: 60, b: 180, a: 200 }
+
+  args.outputs.labels << { x: 640, y: 445, text: 'PAUSED',
+                           alignment_enum: 1, size_enum: 6,
+                           r: 200, g: 160, b: 255, a: 255 }
+
+  labels = ['MUSIC', 'EFFECTS']
+  vols   = [sound.music_vol, sound.sfx_vol]
+  2.times do |i|
+    row_y  = 385 - i * 65
+    active = sel == i
+    lr = active ? 255 : 150; lg = active ? 220 : 140; lb = active ? 255 : 170
+
+    args.outputs.labels << { x: 490, y: row_y + 12, text: labels[i],
+                             size_enum: 1, r: lr, g: lg, b: lb, a: 255 }
+
+    bar_x = 590; bar_w = 190; bar_h = 16
+    fill_w = (bar_w * vols[i]).to_i
+    args.outputs.sprites << { x: bar_x, y: row_y, w: bar_w, h: bar_h,
+                              path: :solid, r: 35, g: 25, b: 55, a: 220 }
+    args.outputs.sprites << { x: bar_x, y: row_y, w: fill_w, h: bar_h,
+                              path: :solid, r: lr, g: (lg * 0.55).to_i, b: lb, a: 220 }
+    args.outputs.labels  << { x: bar_x + bar_w + 10, y: row_y + 12,
+                              text: "#{(vols[i] * 100).round}%",
+                              size_enum: -1, r: lr, g: lg, b: lb, a: 220 }
+  end
+
+  args.outputs.labels << { x: 640, y: 272, text: '← → adjust   ↑ ↓ select   ESC resume',
+                           alignment_enum: 1, size_enum: -2,
+                           r: 120, g: 100, b: 155, a: 200 }
 end
 
 def render_hud(args)

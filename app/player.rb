@@ -6,6 +6,7 @@ class Player
   RADIUS         = 12
   REPEL_COOLDOWN       = 150
   REPEL_RADIUS         = 110
+  REPEL_KILL_RADIUS    = 55
   REPEL_FORCE          = 2.2
   SCALE                = 1.0
   ATTACK_FRAME_DURATION = 4
