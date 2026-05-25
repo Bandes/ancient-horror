@@ -58,6 +58,17 @@ def tick(args)
     return
   end
 
+  # Debug: Ctrl+W forces win screen
+  if args.inputs.keyboard.key_down.w && args.inputs.keyboard.key_held.control
+    args.state.won      = true
+    args.state.end_tick = Kernel.tick_count
+    args.state.sound.sfx_enabled = false
+    args.state.sound.fade_out(args, :ambient, ticks: 30)
+    args.state.sound.start_music(args, :win, base_gain: 0.9)
+    args.state.cthulhu_attack.reset(Kernel.tick_count)
+    args.state.particles.clear
+  end
+
   handle_input(args)
   calc(args)
   check_merge(args)
@@ -147,8 +158,9 @@ def defaults(args)
   args.state.won           = false
   args.state.elapsed_ticks = 0
   args.state.game_over     = false
-  args.state.summon_ticks  = 0
-  args.state.ritual_stage  = 0 # 0-3: how many large shoggoths have reached altar
+  args.state.summon_ticks         = 0
+  args.state.ritual_stage         = 0 # 0-3: how many large shoggoths have reached altar
+  args.state.ritual_music_started = false
   args.state.particles     = []
   args.state.hunters       = []
   args.state.hunter_timer  = 0
@@ -386,9 +398,13 @@ def calc(args)
     args.state.sound.play(args, :player_hit) if !was_inv && player.invincible?
   end
 
-  if nearby_count > 0
+  altar_dx = player.x - args.state.altar_x
+  altar_dy = player.y - args.state.altar_y
+  at_altar  = altar_dx * altar_dx + altar_dy * altar_dy < Cave::ALTAR_RADIUS * Cave::ALTAR_RADIUS
+
+  if nearby_count > 0 && !at_altar
     player.drain_sanity(0.008 + nearby_count * 0.001)
-  else
+  elsif at_altar || nearby_count == 0
     player.recover_sanity(0.03)
   end
 
@@ -514,6 +530,13 @@ def check_win(args)
   player_at_altar = pdx * pdx + pdy * pdy < Cave::ALTAR_RADIUS * Cave::ALTAR_RADIUS
 
   if large_at_altar >= args.state.large_for_win
+    # Transition music the first time the ritual activates
+    unless args.state.ritual_music_started
+      args.state.ritual_music_started = true
+      args.state.sound.fade_out(args, :ambient, ticks: 90)
+      args.state.sound.start_music(args, :win, base_gain: 0.9)
+    end
+
     # Large shoggoths charge ritual on their own; player presence doubles rate
     charge = (player_at_altar ? 2 : 1) * args.state.ritual_speed
     args.state.summon_ticks += charge
@@ -527,8 +550,8 @@ def check_win(args)
       angle = (Kernel.tick_count * 0.04 + i * Math::PI * 2 / num_emitters) % (Math::PI * 2)
       ex = ax + Math.cos(angle) * orbit_r
       ey = ay + Math.sin(angle) * orbit_r
-      pr = rand(140..219).clamp(0, 255)
-      pb = rand(220..254).clamp(0, 255)
+      pr = Numeric.rand(140..219).clamp(0, 255)
+      pb = Numeric.rand(220..254).clamp(0, 255)
       emit_particles(args, ex, ey, 2, r: pr, g: 20 + (pct * 60).to_i, b: pb, speed: 0.8 + pct * 1.2,
                                       size: 4 + (pct * 4).to_i)
     end
@@ -545,7 +568,7 @@ def check_win(args)
         x: bx, y: by, w: 6, h: 6,
         dx: dx / mag * speed, dy: dy / mag * speed,
         a: 220, path: :solid,
-        r: rand(180..254).clamp(0, 255), g: 30, b: 255, blendmode_enum: 1
+        r: Numeric.rand(180..254).clamp(0, 255), g: 30, b: 255, blendmode_enum: 1
       }
     end
     if args.state.summon_ticks >= SUMMON_TICKS_NEEDED
@@ -553,8 +576,8 @@ def check_win(args)
       if args.state.end_tick.nil?
         args.state.end_tick = Kernel.tick_count
         args.state.sound.sfx_enabled = false
-        args.state.sound.fade_out(args, :ambient, ticks: 90)
-        args.state.sound.start_music(args, :win, base_gain: 0.9)
+        args.state.cthulhu_attack.reset(Kernel.tick_count)
+        args.state.particles.clear
       end
     end
   else
@@ -626,7 +649,8 @@ end
 def win_screen(args)
   return false unless args.state.won
 
-  render_base(args)
+  # Background tiles only — no boids/hunters/particles bleeding in
+  args.outputs.sprites << args.state.bg_sprites
 
   age = args.state.end_tick ? Kernel.tick_count - args.state.end_tick : 0
 
@@ -634,26 +658,23 @@ def win_screen(args)
   fade_a = [age * 3, 180].min
   args.outputs.sprites << { x: 0, y: 0, w: 1280, h: 720, path: :solid, r: 5, g: 0, b: 15, a: fade_a }
 
-  # Emit purple particles from Cthulhu position while visible
+  # Purple particles
   if age > 30 && age % 3 == 0
-    emit_particles(args, 640, 400, 3, r: rand(120..199), g: 20, b: rand(220..254), speed: 2.5, size: 5)
+    emit_particles(args, 640, 360, 3, r: Numeric.rand(120..199), g: 20, b: Numeric.rand(220..254), speed: 2.5, size: 5)
   end
   args.state.particles.each do |p|
-    p[:x] += p[:dx]
-    p[:y] += p[:dy]
-    p[:dx] *= 0.93
-    p[:dy] *= 0.93
-    p[:a] -= 5
+    p[:x] += p[:dx]; p[:y] += p[:dy]
+    p[:dx] *= 0.93;  p[:dy] *= 0.93
+    p[:a]  -= 5
   end
   args.state.particles.reject! { |p| p[:a] <= 0 }
   args.outputs.sprites << args.state.particles
 
-  # Choose animation: attack after 3 seconds
-  anim = age > 180 ? args.state.cthulhu_attack : args.state.cthulhu_idle
+  # Attack animation only
+  anim = args.state.cthulhu_attack
   if anim
-    sprite = anim.sprite(Kernel.tick_count, anchor_x: 640, anchor_y: 400, scale: 2.5)
-    sprite_a = [age * 4, 255].min
-    sprite[:a] = sprite_a
+    sprite   = anim.sprite(Kernel.tick_count, anchor_x: 420, anchor_y: 360, scale: 2.5)
+    sprite[:a] = [age * 4, 255].min
     args.outputs.sprites << sprite
   end
 

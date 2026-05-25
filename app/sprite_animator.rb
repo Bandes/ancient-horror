@@ -56,39 +56,52 @@ module WalkFrames
 end
 
 module CthulhuFrames
-  # chthulu.png: 2880x784, cell_w=180, cell_h=196, 4 rows, top-left origin.
-  # Idle: row 0, 16 frames. Body SWAYS across each cell — cx_off is measured
-  # body center per frame (not bbox center). cy_off=32 anchors to face/head.
-  # Attack: row 2, 8 frames.
+  # chthulu.png: 2880x784, cell_w=180, row pitch=112 (7 rows). Idle bbox is taller
+  # than the row pitch because the figure overflows upward into the empty top row.
+  CELL_W = 180
+  CELL_H = 196   # bbox used for idle (overflows into row above)
+  ROW_H  = 112   # actual vertical pitch between animation rows
+
+  # Idle: 16 frames, bbox 180x196 starting y=0 (figure body sits in y=112..196).
   IDLE = [
-    { x:   64, y: 33, w:  60, h: 163, cx_off:  28, cy_off: 32 },
-    { x:  256, y: 33, w:  60, h: 162, cx_off:  28, cy_off: 32 },
-    { x:  448, y: 33, w:  60, h: 162, cx_off:  28, cy_off: 32 },
-    { x:  640, y: 33, w:  60, h: 163, cx_off:  28, cy_off: 32 },
-    { x:  832, y: 33, w:  60, h: 163, cx_off:  28, cy_off: 32 },
-    { x: 1024, y: 32, w:  56, h: 164, cx_off:  27, cy_off: 32 },
-    { x: 1080, y: 32, w: 180, h: 164, cx_off: 151, cy_off: 32 },
-    { x: 1260, y: 32, w: 180, h: 164, cx_off: 127, cy_off: 32 },
-    { x: 1443, y: 33, w: 177, h: 163, cx_off:  89, cy_off: 32 },
-    { x: 1620, y: 32, w: 180, h: 164, cx_off:  48, cy_off: 32 },
-    { x: 1800, y: 32, w:  52, h: 164, cx_off:  23, cy_off: 32 },
-    { x: 1984, y: 33, w:  60, h: 163, cx_off:  28, cy_off: 32 },
-    { x: 2176, y: 33, w:  60, h: 163, cx_off:  28, cy_off: 32 },
-    { x: 2368, y: 33, w:  60, h: 163, cx_off:  28, cy_off: 32 },
-    { x: 2560, y: 33, w:  60, h: 163, cx_off:  28, cy_off: 32 },
-    { x: 2752, y: 33, w:  60, h: 163, cx_off:  29, cy_off: 32 },
+    { x:    0, y: 0, w: CELL_W, h: CELL_H, cx_off:  92, cy_off: 65 },
+    { x:  180, y: 0, w: CELL_W, h: CELL_H, cx_off: 104, cy_off: 65 },
+    { x:  360, y: 0, w: CELL_W, h: CELL_H, cx_off: 116, cy_off: 65 },
+    { x:  540, y: 0, w: CELL_W, h: CELL_H, cx_off: 128, cy_off: 65 },
+    { x:  720, y: 0, w: CELL_W, h: CELL_H, cx_off: 140, cy_off: 65 },
+    { x:  900, y: 0, w: CELL_W, h: CELL_H, cx_off: 151, cy_off: 65 },
+    { x: 1080, y: 0, w: CELL_W, h: CELL_H, cx_off: 151, cy_off: 65 },
+    { x: 1260, y: 0, w: CELL_W, h: CELL_H, cx_off: 127, cy_off: 65 },
+    { x: 1440, y: 0, w: CELL_W, h: CELL_H, cx_off:  92, cy_off: 65 },
+    { x: 1620, y: 0, w: CELL_W, h: CELL_H, cx_off:  48, cy_off: 65 },
+    { x: 1800, y: 0, w: CELL_W, h: CELL_H, cx_off:  23, cy_off: 65 },
+    { x: 1980, y: 0, w: CELL_W, h: CELL_H, cx_off:  32, cy_off: 65 },
+    { x: 2160, y: 0, w: CELL_W, h: CELL_H, cx_off:  44, cy_off: 65 },
+    { x: 2340, y: 0, w: CELL_W, h: CELL_H, cx_off:  56, cy_off: 65 },
+    { x: 2520, y: 0, w: CELL_W, h: CELL_H, cx_off:  68, cy_off: 65 },
+    { x: 2700, y: 0, w: CELL_W, h: CELL_H, cx_off:  81, cy_off: 65 },
   ].freeze
 
-  ATTACK = [
-    { x:   54, y: 392, w:  74, h: 152, cx_off:  34, cy_off: 32 },
-    { x:  245, y: 392, w:  65, h: 152, cx_off:  36, cy_off: 32 },
-    { x:  438, y: 392, w: 102, h: 151, cx_off:  56, cy_off: 32 },
-    { x:  540, y: 392, w: 180, h: 151, cx_off:  80, cy_off: 32 },
-    { x:  720, y: 392, w: 178, h: 151, cx_off:  47, cy_off: 32 },
-    { x:  900, y: 392, w: 180, h: 151, cx_off:  54, cy_off: 32 },
-    { x: 1083, y: 392, w: 177, h: 151, cx_off:  63, cy_off: 32 },
-    { x: 1260, y: 394, w: 180, h: 149, cx_off:  90, cy_off: 32 },
+  # Win/awaken: row 4 tentacle whip. Cells have VARIABLE widths — body sits at
+  # left of each bbox, tentacle extends right by varying amounts. Bboxes were
+  # measured from alpha-channel column gaps in the source image.
+  # Format: [tile_x, tile_w]. Common y=482, h=62 across all frames.
+  ATTACK_BBOXES = [
+    [  54,  65],  # F0 pre-attack pose
+    [ 245,  65],  # F1 pre-attack pose
+    [ 438, 111],  # F2 whip begins extending right
+    [ 630, 135],  # F3 whip full
+    [ 823, 134],  # F4 whip full
+    [1015, 134],  # F5 whip full
+    [1207, 135],  # F6 whip full
+    [1411,  80],  # F7 retracting
+    [1599,  61],  # F8 back to rest
   ].freeze
+  ATTACK = ATTACK_BBOXES.map { |x, w|
+    # cx_off=0 pins the bbox left edge (= body left) at anchor_x.
+    # cy_off = h/2 vertical-centers the figure on anchor_y.
+    { x: x, y: 482, w: w, h: 62, cx_off: 0, cy_off: 31 }
+  }.freeze
 end
 
 module AttackFrames
