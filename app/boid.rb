@@ -300,8 +300,9 @@ module Flock
       end
     end
 
-    b.x = b.x.clamp(Cave::TILE_SIZE + r, 1280.0 - Cave::TILE_SIZE - r)
-    b.y = b.y.clamp(Cave::TILE_SIZE + r, 720.0  - Cave::TILE_SIZE - r)
+    bp = Cave::STONE_FACE_PX
+    b.x = b.x.clamp(bp + r, 1280.0 - bp - r)
+    b.y = b.y.clamp(bp + r, 720.0  - bp - r)
   end
 
   def self.resolve_collisions(boids)

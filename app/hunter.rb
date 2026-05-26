@@ -63,8 +63,9 @@ class Hunter
     elsif @vy != 0 && !Cave.circle_blocks?(wall_rects, @x, ny, r)
       @y = ny
     end
-    @x = @x.clamp(Cave::TILE_SIZE + r.to_f, 1280.0 - Cave::TILE_SIZE - r.to_f)
-    @y = @y.clamp(Cave::TILE_SIZE + r.to_f, 720.0 - Cave::TILE_SIZE - r.to_f)
+    b = Cave::STONE_FACE_PX
+    @x = @x.clamp(b + r.to_f, 1280.0 - b - r.to_f)
+    @y = @y.clamp(b + r.to_f, 720.0  - b - r.to_f)
 
     @hit_timer -= 1 if @hit_timer > 0
   end

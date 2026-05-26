@@ -72,9 +72,9 @@ class Player
       @y = ty
     end
 
-    inner = Cave::TILE_SIZE
-    @x = @x.clamp(inner + r.to_f, 1280 - inner - r.to_f)
-    @y = @y.clamp(inner + r.to_f, 720  - inner - r.to_f)
+    border = Cave::STONE_FACE_PX
+    @x = @x.clamp(border + r.to_f, 1280 - border - r.to_f)
+    @y = @y.clamp(border + r.to_f, 720  - border - r.to_f)
     @hit_timer -= 1 if @hit_timer > 0
   end
 
