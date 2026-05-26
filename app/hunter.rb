@@ -39,7 +39,7 @@ class Hunter
     @hit_timer = HIT_CD
   end
 
-  def update(tx, ty, cave_grid)
+  def update(tx, ty, wall_rects)
     spd = base_speed
     dx = tx - @x; dy = ty - @y
     mag = Math.sqrt(dx * dx + dy * dy)
@@ -56,11 +56,11 @@ class Hunter
     r = RADIUS
     nx = @x + @vx
     ny = @y + @vy
-    if !Cave.blocks_circle?(cave_grid, nx, ny, r)
+    if !Cave.circle_blocks?(wall_rects, nx, ny, r)
       @x = nx; @y = ny
-    elsif @vx != 0 && !Cave.blocks_circle?(cave_grid, nx, @y, r)
+    elsif @vx != 0 && !Cave.circle_blocks?(wall_rects, nx, @y, r)
       @x = nx
-    elsif @vy != 0 && !Cave.blocks_circle?(cave_grid, @x, ny, r)
+    elsif @vy != 0 && !Cave.circle_blocks?(wall_rects, @x, ny, r)
       @y = ny
     end
     @x = @x.clamp(Cave::TILE_SIZE + r.to_f, 1280.0 - Cave::TILE_SIZE - r.to_f)

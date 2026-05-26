@@ -261,6 +261,61 @@ module Cave
     visited
   end
 
+  # Build a list of thin AABB collision rects that exactly match the stone-face
+  # strips drawn by wall_tile. Border tiles are full-tile rects; interior face
+  # tiles get a STONE_FACE_PX-deep rect on the floor side; corner-only tiles get
+  # a STONE_FACE_PX square at the relevant corner.
+  def self.generate_wall_colliders(grid)
+    rects = []
+    ROWS.times do |r|
+      COLS.times do |c|
+        next unless grid[r][c] == :wall
+
+        tx = c * TILE_SIZE
+        ty = r * TILE_SIZE
+
+        if c == 0 || c == COLS - 1 || r == 0 || r == ROWS - 1
+          rects << { x: tx, y: ty, w: TILE_SIZE, h: TILE_SIZE }
+          next
+        end
+
+        fs = r > 0        && grid[r - 1][c] != :wall
+        fn = r < ROWS - 1 && grid[r + 1][c] != :wall
+        fe = c < COLS - 1 && grid[r][c + 1] != :wall
+        fw = c > 0        && grid[r][c - 1] != :wall
+
+        rects << { x: tx,                              y: ty,                              w: TILE_SIZE,    h: STONE_FACE_PX } if fs
+        rects << { x: tx,                              y: ty + TILE_SIZE - STONE_FACE_PX,  w: TILE_SIZE,    h: STONE_FACE_PX } if fn
+        rects << { x: tx + TILE_SIZE - STONE_FACE_PX,  y: ty,                              w: STONE_FACE_PX, h: TILE_SIZE    } if fe
+        rects << { x: tx,                              y: ty,                              w: STONE_FACE_PX, h: TILE_SIZE    } if fw
+
+        next if fs || fn || fe || fw
+
+        fse = c < COLS-1 && r > 0        && grid[r-1][c+1] != :wall
+        fsw = c > 0      && r > 0        && grid[r-1][c-1] != :wall
+        fne = c < COLS-1 && r < ROWS-1   && grid[r+1][c+1] != :wall
+        fnw = c > 0      && r < ROWS-1   && grid[r+1][c-1] != :wall
+
+        rects << { x: tx + TILE_SIZE - STONE_FACE_PX, y: ty,                              w: STONE_FACE_PX, h: STONE_FACE_PX } if fse
+        rects << { x: tx,                             y: ty,                              w: STONE_FACE_PX, h: STONE_FACE_PX } if fsw
+        rects << { x: tx + TILE_SIZE - STONE_FACE_PX, y: ty + TILE_SIZE - STONE_FACE_PX,  w: STONE_FACE_PX, h: STONE_FACE_PX } if fne
+        rects << { x: tx,                             y: ty + TILE_SIZE - STONE_FACE_PX,  w: STONE_FACE_PX, h: STONE_FACE_PX } if fnw
+      end
+    end
+    rects
+  end
+
+  # Circle vs list of AABB wall rects. Returns true if any rect overlaps.
+  def self.circle_blocks?(wall_rects, cx, cy, r)
+    r2 = r * r
+    wall_rects.any? do |rect|
+      nx = cx.clamp(rect[:x], rect[:x] + rect[:w])
+      ny = cy.clamp(rect[:y], rect[:y] + rect[:h])
+      dx = cx - nx; dy = cy - ny
+      dx * dx + dy * dy < r2
+    end
+  end
+
   def self.wall?(grid, col, row)
     return true if col < 0 || col >= COLS || row < 0 || row >= ROWS
     grid[row][col] == :wall

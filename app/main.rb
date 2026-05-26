@@ -102,7 +102,8 @@ def defaults(args)
   args.state.cave_grid = cave_data[:grid]
   args.state.altar_x   = Cave.tile_center(cave_data[:altar_col], cave_data[:altar_row])[:x]
   args.state.altar_y   = Cave.tile_center(cave_data[:altar_col], cave_data[:altar_row])[:y]
-  args.state.flow_altar = FlowField.build(cave_data[:grid], cave_data[:altar_col], cave_data[:altar_row])
+  args.state.flow_altar     = FlowField.build(cave_data[:grid], cave_data[:altar_col], cave_data[:altar_row])
+  args.state.wall_colliders = Cave.generate_wall_colliders(cave_data[:grid])
 
   spawn = Cave.tile_center(cave_data[:spawn_col], cave_data[:spawn_row])
 
@@ -238,7 +239,7 @@ end
 def handle_input(args)
   player = args.state.player
   tc = args.state.touch
-  player.update(args.inputs, args.state.cave_grid, touch_dx: tc.dx, touch_dy: tc.dy)
+  player.update(args.inputs, args.state.wall_colliders, touch_dx: tc.dx, touch_dy: tc.dy)
   player.x, player.y = resolve_prop_collisions(player.x, player.y, Player::RADIUS, args.state.prop_colliders)
 
   return unless args.inputs.keyboard.key_down.space || tc.interact_tap
@@ -377,7 +378,8 @@ def calc(args)
     speed_mult: args.state.boid_speed_mult,
     flow_altar: args.state.flow_altar,
     flow_player: args.state.flow_player,
-    flow_idols: args.state.flow_idols
+    flow_idols: args.state.flow_idols,
+    wall_rects: args.state.wall_colliders
   )
 
   prop_colliders = args.state.prop_colliders
@@ -812,7 +814,7 @@ def tick_hunters(args)
              else
                placed_idols.min_by { |i| (i[:x] - h.x)**2 + (i[:y] - h.y)**2 }
              end
-    h.update(target[:x], target[:y], args.state.cave_grid)
+    h.update(target[:x], target[:y], args.state.wall_colliders)
     h.x, h.y = resolve_prop_collisions(h.x, h.y, Hunter::RADIUS, args.state.prop_colliders)
 
     # Watcher aura drains sanity when player is inside its radius

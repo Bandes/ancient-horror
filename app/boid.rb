@@ -102,7 +102,8 @@ module Flock
 
   def self.step(boids, cave_grid:, idols:, altar_x:, altar_y:, player_x:, player_y:,
                ritual_stage: 0, hunters: [], speed_mult: 1.0,
-               flow_altar: nil, flow_player: nil, flow_idols: nil)
+               flow_altar: nil, flow_player: nil, flow_idols: nil,
+               wall_rects: [])
     speed_boost   = (1.0 + ritual_stage * 0.15) * speed_mult
     player_w_boost = 1.0 + ritual_stage * 0.25
     perception_sq = PERCEPTION * PERCEPTION
@@ -269,40 +270,34 @@ module Flock
       b.x += b.vx
       b.y += b.vy
 
-      resolve_wall_collision(b, cave_grid)
+      resolve_wall_collision(b, wall_rects)
     end
 
     resolve_collisions(boids)
   end
 
-  def self.resolve_wall_collision(b, cave_grid)
-    r = b.collision_r.to_f
+  def self.resolve_wall_collision(b, wall_rects)
+    r  = b.collision_r.to_f
+    r2 = r * r
 
-    if Cave.blocks_movement?(cave_grid, (b.x + r).to_i, b.y.to_i) && b.vx > 0
-      b.vx = -b.vx.abs * 0.3
-      b.x  = (b.x + r).idiv(Cave::TILE_SIZE) * Cave::TILE_SIZE - r - 0.5
-    end
-    if Cave.blocks_movement?(cave_grid, (b.x - r).to_i, b.y.to_i) && b.vx < 0
-      b.vx = b.vx.abs * 0.3
-      b.x  = ((b.x - r).idiv(Cave::TILE_SIZE) + 1) * Cave::TILE_SIZE + r + 0.5
-    end
-    if Cave.blocks_movement?(cave_grid, b.x.to_i, (b.y + r).to_i) && b.vy > 0
-      b.vy = -b.vy.abs * 0.3
-      b.y  = (b.y + r).idiv(Cave::TILE_SIZE) * Cave::TILE_SIZE - r - 0.5
-    end
-    if Cave.blocks_movement?(cave_grid, b.x.to_i, (b.y - r).to_i) && b.vy < 0
-      b.vy = b.vy.abs * 0.3
-      b.y  = ((b.y - r).idiv(Cave::TILE_SIZE) + 1) * Cave::TILE_SIZE + r + 0.5
-    end
+    wall_rects.each do |rect|
+      nx = b.x.clamp(rect[:x], rect[:x] + rect[:w])
+      ny = b.y.clamp(rect[:y], rect[:y] + rect[:h])
+      dx = b.x - nx; dy = b.y - ny
+      d2 = dx * dx + dy * dy
+      next if d2 >= r2 || d2 < 0.0001
 
-    # Diagonal corner safety — axis tests can miss inside corners
-    if Cave.blocks_circle?(cave_grid, b.x, b.y, r)
-      sp = Math.sqrt(b.vx * b.vx + b.vy * b.vy)
-      if sp > 0.001
-        b.x -= b.vx / sp * (r * 0.5)
-        b.y -= b.vy / sp * (r * 0.5)
+      d       = Math.sqrt(d2)
+      overlap = r - d
+      px = dx / d; py = dy / d
+      b.x += px * overlap
+      b.y += py * overlap
+
+      dot = b.vx * px + b.vy * py
+      if dot < 0
+        b.vx -= px * dot * COLLISION_DAMP
+        b.vy -= py * dot * COLLISION_DAMP
       end
-      b.vx *= 0.2; b.vy *= 0.2
     end
 
     b.x = b.x.clamp(Cave::TILE_SIZE + r, 1280.0 - Cave::TILE_SIZE - r)
