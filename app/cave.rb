@@ -275,7 +275,24 @@ module Cave
         ty = r * TILE_SIZE
 
         if c == 0 || c == COLS - 1 || r == 0 || r == ROWS - 1
-          rects << { x: tx, y: ty, w: TILE_SIZE, h: TILE_SIZE }
+          # Thin inward-facing strip — keeps pushout consistent with interior walls.
+          if r == 0 && c == 0
+            rects << { x: tx + TILE_SIZE - STONE_FACE_PX, y: ty + TILE_SIZE - STONE_FACE_PX, w: STONE_FACE_PX, h: STONE_FACE_PX }
+          elsif r == 0 && c == COLS - 1
+            rects << { x: tx, y: ty + TILE_SIZE - STONE_FACE_PX, w: STONE_FACE_PX, h: STONE_FACE_PX }
+          elsif r == ROWS - 1 && c == 0
+            rects << { x: tx + TILE_SIZE - STONE_FACE_PX, y: ty, w: STONE_FACE_PX, h: STONE_FACE_PX }
+          elsif r == ROWS - 1 && c == COLS - 1
+            rects << { x: tx, y: ty, w: STONE_FACE_PX, h: STONE_FACE_PX }
+          elsif r == 0
+            rects << { x: tx, y: ty + TILE_SIZE - STONE_FACE_PX, w: TILE_SIZE, h: STONE_FACE_PX }
+          elsif r == ROWS - 1
+            rects << { x: tx, y: ty, w: TILE_SIZE, h: STONE_FACE_PX }
+          elsif c == 0
+            rects << { x: tx + TILE_SIZE - STONE_FACE_PX, y: ty, w: STONE_FACE_PX, h: TILE_SIZE }
+          else
+            rects << { x: tx, y: ty, w: STONE_FACE_PX, h: TILE_SIZE }
+          end
           next
         end
 
