@@ -44,18 +44,22 @@ class Player
 
   attr_accessor :speed_scale
 
-  def update(input, cave_grid)
+  def update(input, cave_grid, touch_dx: 0.0, touch_dy: 0.0)
     speed = SPEED * (@speed_scale || 1.0)
     vx = 0.0; vy = 0.0
     vx -= speed if input.keyboard.key_held.left  || input.keyboard.key_held.a
     vx += speed if input.keyboard.key_held.right || input.keyboard.key_held.d
     vy -= speed if input.keyboard.key_held.down  || input.keyboard.key_held.s
     vy += speed if input.keyboard.key_held.up    || input.keyboard.key_held.w
-    @facing_left = vx < 0 if vx != 0
 
-    if vx != 0.0 && vy != 0.0
+    if vx == 0.0 && vy == 0.0 && (touch_dx != 0.0 || touch_dy != 0.0)
+      vx = touch_dx * speed
+      vy = touch_dy * speed
+    elsif vx != 0.0 && vy != 0.0
       vx *= 0.7071; vy *= 0.7071
     end
+
+    @facing_left = vx < 0 if vx != 0
 
     r = RADIUS
     tx = @x + vx

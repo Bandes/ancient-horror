@@ -4,6 +4,8 @@ require 'app/boid'
 require 'app/player'
 require 'app/hunter'
 require 'app/sound'
+require 'app/touch_controls'
+require 'app/flow_field'
 
 CREATURE_COUNT        = 50
 LARGE_FOR_WIN         = 3
@@ -44,10 +46,12 @@ end
 def tick(args)
   defaults(args)
   args.state.sound.tick(args)
+  args.state.touch.tick(args)
   return if intro_screen(args)
   return if game_over_screen(args) || win_screen(args)
 
-  if args.inputs.keyboard.key_down.escape
+  tc = args.state.touch
+  if args.inputs.keyboard.key_down.escape || tc.pause_tap
     args.state.paused = !args.state.paused
     args.state.pause_sel ||= 0
   end
@@ -55,6 +59,7 @@ def tick(args)
   if args.state.paused
     render(args)
     pause_menu(args)
+    args.state.touch.render(args)
     return
   end
 
@@ -78,6 +83,7 @@ def tick(args)
   emit_flow_particles(args)
   tick_particles(args)
   render(args)
+  args.state.touch.render(args)
 end
 
 def defaults(args)
@@ -96,6 +102,7 @@ def defaults(args)
   args.state.cave_grid = cave_data[:grid]
   args.state.altar_x   = Cave.tile_center(cave_data[:altar_col], cave_data[:altar_row])[:x]
   args.state.altar_y   = Cave.tile_center(cave_data[:altar_col], cave_data[:altar_row])[:y]
+  args.state.flow_altar = FlowField.build(cave_data[:grid], cave_data[:altar_col], cave_data[:altar_row])
 
   spawn = Cave.tile_center(cave_data[:spawn_col], cave_data[:spawn_row])
 
@@ -202,6 +209,7 @@ def defaults(args)
     }
   end
   args.state.sound         = Sound.new(args.gtk)
+  args.state.touch         = TouchControls.new
   args.state.intro         = true
   args.state.start_tick    = nil
   args.state.paused        = false
@@ -229,10 +237,11 @@ end
 
 def handle_input(args)
   player = args.state.player
-  player.update(args.inputs, args.state.cave_grid)
+  tc = args.state.touch
+  player.update(args.inputs, args.state.cave_grid, touch_dx: tc.dx, touch_dy: tc.dy)
   player.x, player.y = resolve_prop_collisions(player.x, player.y, Player::RADIUS, args.state.prop_colliders)
 
-  return unless args.inputs.keyboard.key_down.space
+  return unless args.inputs.keyboard.key_down.space || tc.interact_tap
 
   args.state.idols.each do |idol|
     next unless idol[:placed]
@@ -259,12 +268,33 @@ def handle_input(args)
   args.state.sound.play(args, :idol_place)
 end
 
+def tick_flow_fields(args)
+  cave   = args.state.cave_grid
+  player = args.state.player
+
+  pcell = [player.x.idiv(Cave::TILE_SIZE), player.y.idiv(Cave::TILE_SIZE)]
+  if args.state.flow_player_cell != pcell
+    args.state.flow_player_cell = pcell
+    args.state.flow_player = FlowField.build(cave, pcell[0], pcell[1])
+  end
+
+  idol_sig = args.state.idols.map { |id| id[:placed] ? [id[:x].to_i, id[:y].to_i] : nil }
+  if args.state.flow_idol_sig != idol_sig
+    args.state.flow_idol_sig = idol_sig
+    args.state.flow_idols = args.state.idols.map do |id|
+      next nil unless id[:placed]
+      FlowField.build(cave, id[:x].idiv(Cave::TILE_SIZE), id[:y].idiv(Cave::TILE_SIZE))
+    end
+  end
+end
+
 def calc(args)
   player = args.state.player
   player.tick_repel
 
   # Repel: E key blasts nearby shoggoths away; inner kill zone destroys/splits them
-  if args.inputs.keyboard.key_down.e && player.repel_ready?
+  tc = args.state.touch
+  if (args.inputs.keyboard.key_down.e || tc.repel_held) && player.repel_ready?
     player.repel!(Kernel.tick_count)
     args.state.sound.play(args, :repel)
     repel_r_sq      = Player::REPEL_RADIUS**2
@@ -332,6 +362,8 @@ def calc(args)
   end
   args.state.repel_flash = [(args.state.repel_flash || 0) - 1, 0].max
 
+  tick_flow_fields(args)
+
   Flock.step(
     args.state.boids,
     cave_grid: args.state.cave_grid,
@@ -342,7 +374,10 @@ def calc(args)
     player_y: player.y,
     ritual_stage: args.state.ritual_stage,
     hunters: args.state.hunters,
-    speed_mult: args.state.boid_speed_mult
+    speed_mult: args.state.boid_speed_mult,
+    flow_altar: args.state.flow_altar,
+    flow_player: args.state.flow_player,
+    flow_idols: args.state.flow_idols
   )
 
   prop_colliders = args.state.prop_colliders

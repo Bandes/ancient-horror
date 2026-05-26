@@ -100,7 +100,9 @@ module Flock
   HUNTER_FLEE_R_SQ = HUNTER_FLEE_R * HUNTER_FLEE_R
   W_HUNTER_FLEE    = 2.4
 
-  def self.step(boids, cave_grid:, idols:, altar_x:, altar_y:, player_x:, player_y:, ritual_stage: 0, hunters: [], speed_mult: 1.0)
+  def self.step(boids, cave_grid:, idols:, altar_x:, altar_y:, player_x:, player_y:,
+               ritual_stage: 0, hunters: [], speed_mult: 1.0,
+               flow_altar: nil, flow_player: nil, flow_idols: nil)
     speed_boost   = (1.0 + ritual_stage * 0.15) * speed_mult
     player_w_boost = 1.0 + ritual_stage * 0.25
     perception_sq = PERCEPTION * PERCEPTION
@@ -145,30 +147,38 @@ module Flock
 
       # Find nearest placed idol (tier 1+2) or best target for tier 3
       near_idol = false
+      nearest_idol_idx = nil
       if b.tier == 3
         altar_dx = altar_x - b.x; altar_dy = altar_y - b.y
         altar_d2 = altar_dx * altar_dx + altar_dy * altar_dy
         pdx = player_x - b.x; pdy = player_y - b.y
         pd2 = pdx * pdx + pdy * pdy
-        if pd2 < altar_d2
-          best_dx = pdx; best_dy = pdy; best_d2 = pd2
-        else
-          best_dx = altar_dx; best_dy = altar_dy; best_d2 = altar_d2
-        end
+        targeting_player = pd2 < altar_d2
+        best_dx = targeting_player ? pdx : altar_dx
+        best_dy = targeting_player ? pdy : altar_dy
+        best_d2 = targeting_player ? pd2 : altar_d2
         near_idol = altar_d2 < Cave::ALTAR_RADIUS * Cave::ALTAR_RADIUS
+        seek_field = targeting_player ? flow_player : flow_altar
       else
         best_d2 = Float::INFINITY
         best_dx = best_dy = 0.0
-        idols.each do |idol|
+        idols.each_with_index do |idol, idx|
           next unless idol[:placed]
           dx = idol[:x] - b.x; dy = idol[:y] - b.y
           d2 = dx * dx + dy * dy
           if d2 < best_d2
             best_d2 = d2; best_dx = dx; best_dy = dy
+            nearest_idol_idx = idx
           end
         end
         near_idol = best_d2 < Cave::MERGE_RADIUS * Cave::MERGE_RADIUS
+        seek_field = (nearest_idol_idx && flow_idols) ? flow_idols[nearest_idol_idx] : flow_player
       end
+
+      # Flow-field overrides direct seek direction when a path exists
+      fdx, fdy = FlowField.direction(seek_field, b.x, b.y)
+      seek_dx = (fdx != 0.0 || fdy != 0.0) ? fdx : best_dx
+      seek_dy = (fdx != 0.0 || fdy != 0.0) ? fdy : best_dy
 
       # Tier 3 always marches — suppress wander and impulses entirely
       wander_scale = (near_idol || b.tier == 3) ? 0.05 : 1.0
@@ -197,12 +207,12 @@ module Flock
       b.speed_target  = b.speed_target.clamp(SPEED_MULT_MIN, SPEED_MULT_MAX)
       b.speed_mult   += (b.speed_target - b.speed_mult) * 0.05
 
-      # Seek target
+      # Seek target (flow-field direction already in seek_dx/seek_dy)
       if b.tier == 3
-        sx, sy = steer_to(best_dx, best_dy, b.vx, b.vy)
+        sx, sy = steer_to(seek_dx, seek_dy, b.vx, b.vy)
         ax += sx * (near_idol ? 5.0 : 3.5); ay += sy * (near_idol ? 5.0 : 3.5)
       elsif best_d2 < IDOL_ATTRACT_RADIUS_SQ
-        sx, sy = steer_to(best_dx, best_dy, b.vx, b.vy)
+        sx, sy = steer_to(seek_dx, seek_dy, b.vx, b.vy)
         weight = near_idol ? 5.0 : (0.6 * (1.0 - Math.sqrt(best_d2) / Math.sqrt(IDOL_ATTRACT_RADIUS_SQ)))
         ax += sx * weight; ay += sy * weight
       end
@@ -226,12 +236,15 @@ module Flock
         end
       end
 
-      # Player as lure — tier 1+2 attracted to player at medium range
+      # Player as lure — tier 1+2 attracted to player at medium range (flow-guided)
       if b.tier < 3
         pdx = player_x - b.x; pdy = player_y - b.y
         pd2 = pdx * pdx + pdy * pdy
         if pd2 < PLAYER_ATTRACT_RADIUS_SQ
-          sx, sy = steer_to(pdx, pdy, b.vx, b.vy)
+          pfdx, pfdy = FlowField.direction(flow_player, b.x, b.y)
+          use_dx = (pfdx != 0.0 || pfdy != 0.0) ? pfdx : pdx
+          use_dy = (pfdx != 0.0 || pfdy != 0.0) ? pfdy : pdy
+          sx, sy = steer_to(use_dx, use_dy, b.vx, b.vy)
           pw = W_PLAYER * player_w_boost * (1.0 - Math.sqrt(pd2) / Math.sqrt(PLAYER_ATTRACT_RADIUS_SQ))
           ax += sx * pw; ay += sy * pw
         end
