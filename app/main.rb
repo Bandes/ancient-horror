@@ -280,12 +280,13 @@ def tick_flow_fields(args)
   end
 
   idol_sig = args.state.idols.map { |id| id[:placed] ? [id[:x].to_i, id[:y].to_i] : nil }
-  if args.state.flow_idol_sig != idol_sig
-    args.state.flow_idol_sig = idol_sig
-    args.state.flow_idols = args.state.idols.map do |id|
-      next nil unless id[:placed]
-      FlowField.build(cave, id[:x].idiv(Cave::TILE_SIZE), id[:y].idiv(Cave::TILE_SIZE))
-    end
+  return unless args.state.flow_idol_sig != idol_sig
+
+  args.state.flow_idol_sig = idol_sig
+  args.state.flow_idols = args.state.idols.map do |id|
+    next nil unless id[:placed]
+
+    FlowField.build(cave, id[:x].idiv(Cave::TILE_SIZE), id[:y].idiv(Cave::TILE_SIZE))
   end
 end
 
@@ -437,7 +438,7 @@ def calc(args)
 
   altar_dx = player.x - args.state.altar_x
   altar_dy = player.y - args.state.altar_y
-  at_altar  = altar_dx * altar_dx + altar_dy * altar_dy < Cave::ALTAR_RADIUS * Cave::ALTAR_RADIUS
+  at_altar = altar_dx * altar_dx + altar_dy * altar_dy < Cave::ALTAR_RADIUS * Cave::ALTAR_RADIUS
 
   if nearby_count > 0 && !at_altar
     player.drain_sanity(0.008 + nearby_count * 0.001)
@@ -626,7 +627,7 @@ def intro_screen(args)
   return false unless args.state.intro
 
   args.outputs.background_color = [5, 3, 12]
-  args.outputs.labels << { x: 640, y: 520, text: 'ANCIENT AND NAMELESS',
+  args.outputs.labels << { x: 640, y: 520, text: 'Elder Cave',
                            alignment_enum: 1, size_enum: 10, r: 160, g: 80, b: 255, a: 255 }
   args.outputs.labels << { x: 640, y: 458, text: 'You are an acolyte of the Old Ones. Legend has it that one awaits deep beneath the earth.',
                            alignment_enum: 1, size_enum: 2, r: 180, g: 150, b: 220, a: 255 }
@@ -700,8 +701,10 @@ def win_screen(args)
     emit_particles(args, 640, 360, 3, r: Numeric.rand(120..199), g: 20, b: Numeric.rand(220..254), speed: 2.5, size: 5)
   end
   args.state.particles.each do |p|
-    p[:x] += p[:dx]; p[:y] += p[:dy]
-    p[:dx] *= 0.93;  p[:dy] *= 0.93
+    p[:x] += p[:dx]
+    p[:y] += p[:dy]
+    p[:dx] *= 0.93
+    p[:dy] *= 0.93
     p[:a]  -= 5
   end
   args.state.particles.reject! { |p| p[:a] <= 0 }
@@ -710,7 +713,7 @@ def win_screen(args)
   # Attack animation only
   anim = args.state.cthulhu_attack
   if anim
-    sprite   = anim.sprite(Kernel.tick_count, anchor_x: 420, anchor_y: 360, scale: 2.5)
+    sprite = anim.sprite(Kernel.tick_count, anchor_x: 420, anchor_y: 360, scale: 2.5)
     sprite[:a] = [age * 4, 255].min
     args.outputs.sprites << sprite
   end
@@ -979,10 +982,13 @@ def render_idols(args)
     next unless idol[:placed]
 
     # Count nearby shoggoths per tier
-    near_small = 0; near_medium = 0
+    near_small = 0
+    near_medium = 0
     args.state.boids.each do |b|
-      dx = b.x - idol[:x]; dy = b.y - idol[:y]
+      dx = b.x - idol[:x]
+      dy = b.y - idol[:y]
       next if dx * dx + dy * dy > merge_r * merge_r
+
       near_small  += 1 if b.tier == 1
       near_medium += 1 if b.tier == 2
     end
@@ -994,11 +1000,12 @@ def render_idols(args)
     ring_r = (60  + best_pct * 195).to_i.clamp(0, 255)
     ring_g = (180 + best_pct * 75).to_i.clamp(0, 255)
     ring_b = 60
-    ring_a = (55  + best_pct * 160).to_i.clamp(0, 255)
+    ring_a = (55 + best_pct * 160).to_i.clamp(0, 255)
 
     # Dashed ring: 32 dots around circumference
     32.times do |i|
-      next if i.odd? && best_pct < 0.25  # sparse when nearly empty
+      next if i.odd? && best_pct < 0.25 # sparse when nearly empty
+
       angle = i * Math::PI * 2 / 32
       rx = idol[:x] + Math.cos(angle) * merge_r
       ry = idol[:y] + Math.sin(angle) * merge_r
@@ -1008,7 +1015,7 @@ def render_idols(args)
 
     # Count label beneath idol
     parts = []
-    parts << "#{near_small}/#{Cave::MERGE_THRESHOLD_SMALL}s"  if near_small  > 0
+    parts << "#{near_small}/#{Cave::MERGE_THRESHOLD_SMALL}s" if near_small > 0
     parts << "#{near_medium}/#{Cave::MERGE_THRESHOLD_MEDIUM}m" if near_medium > 0
     unless parts.empty?
       args.outputs.labels << {
@@ -1038,7 +1045,8 @@ def emit_flow_particles(args)
     next if Kernel.tick_count % 6 != b.object_id % 6
 
     nearest = placed.min_by { |idol| (idol[:x] - b.x)**2 + (idol[:y] - b.y)**2 }
-    dx = nearest[:x] - b.x; dy = nearest[:y] - b.y
+    dx = nearest[:x] - b.x
+    dy = nearest[:y] - b.y
     d2 = dx * dx + dy * dy
     next if d2 > attract_r_sq || d2 < 28 * 28
 
@@ -1050,8 +1058,8 @@ def emit_flow_particles(args)
       w: 3, h: 3,
       dx: dx / d * speed * (0.6 + rand * 0.6),
       dy: dy / d * speed * (0.6 + rand * 0.6),
-      a: 160 + rand(60), path: :solid,
-      r: 100 + rand(80), g: 200 + rand(55), b: 60, blendmode_enum: 1
+      a: Numeric.rand(160..219), path: :solid,
+      r: Numeric.rand(100..179), g: Numeric.rand(200..254), b: 60, blendmode_enum: 1
     }
   end
 end
@@ -1088,7 +1096,10 @@ def pause_menu(args)
                             r: 0, g: 0, b: 0, a: 160 }
 
   # Panel background + border
-  px = 440; py = 255; pw = 400; ph = 210
+  px = 440
+  py = 255
+  pw = 400
+  ph = 210
   args.outputs.sprites  << { x: px, y: py, w: pw, h: ph, path: :solid,
                              r: 12, g: 8, b: 28, a: 235 }
   args.outputs.borders  << { x: px, y: py, w: pw, h: ph,
@@ -1098,17 +1109,21 @@ def pause_menu(args)
                            alignment_enum: 1, size_enum: 6,
                            r: 200, g: 160, b: 255, a: 255 }
 
-  labels = ['MUSIC', 'EFFECTS']
+  labels = %w[MUSIC EFFECTS]
   vols   = [sound.music_vol, sound.sfx_vol]
   2.times do |i|
     row_y  = 385 - i * 65
     active = sel == i
-    lr = active ? 255 : 150; lg = active ? 220 : 140; lb = active ? 255 : 170
+    lr = active ? 255 : 150
+    lg = active ? 220 : 140
+    lb = active ? 255 : 170
 
     args.outputs.labels << { x: 490, y: row_y + 12, text: labels[i],
                              size_enum: 1, r: lr, g: lg, b: lb, a: 255 }
 
-    bar_x = 590; bar_w = 190; bar_h = 16
+    bar_x = 590
+    bar_w = 190
+    bar_h = 16
     fill_w = (bar_w * vols[i]).to_i
     args.outputs.sprites << { x: bar_x, y: row_y, w: bar_w, h: bar_h,
                               path: :solid, r: 35, g: 25, b: 55, a: 220 }
@@ -1167,7 +1182,7 @@ def render_hud(args)
   # Repel cooldown bar (bottom-left)
   bar_w = 80
   ready = player.repel_ready?
-  args.outputs.labels << { x: 10, y: 24, text: ready ? '[E] STOMP' : '[E] ...',
+  args.outputs.labels << { x: 10, y: 24, text: ready ? '[E] REPEL' : '[E] ...',
                            size_enum: -2, r: ready ? 255 : 140, g: ready ? 200 : 140, b: ready ? 80 : 140, a: 255 }
   args.outputs.sprites << { x: 10, y: 28, w: bar_w, h: 5,
                             path: :solid, r: 40, g: 40, b: 40, a: 180 }
