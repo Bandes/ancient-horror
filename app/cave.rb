@@ -284,22 +284,31 @@ module Cave
         fe = c < COLS - 1 && grid[r][c + 1] != :wall
         fw = c > 0        && grid[r][c - 1] != :wall
 
-        rects << { x: tx,                              y: ty,                              w: TILE_SIZE,    h: STONE_FACE_PX } if fs
-        rects << { x: tx,                              y: ty + TILE_SIZE - STONE_FACE_PX,  w: TILE_SIZE,    h: STONE_FACE_PX } if fn
-        rects << { x: tx + TILE_SIZE - STONE_FACE_PX,  y: ty,                              w: STONE_FACE_PX, h: TILE_SIZE    } if fe
-        rects << { x: tx,                              y: ty,                              w: STONE_FACE_PX, h: TILE_SIZE    } if fw
+        # Mirror blocks_movement? priority (s > n > e > w) — one rect per tile.
+        if fs
+          rects << { x: tx, y: ty, w: TILE_SIZE, h: STONE_FACE_PX }
+        elsif fn
+          rects << { x: tx, y: ty + TILE_SIZE - STONE_FACE_PX, w: TILE_SIZE, h: STONE_FACE_PX }
+        elsif fe
+          rects << { x: tx + TILE_SIZE - STONE_FACE_PX, y: ty, w: STONE_FACE_PX, h: TILE_SIZE }
+        elsif fw
+          rects << { x: tx, y: ty, w: STONE_FACE_PX, h: TILE_SIZE }
+        else
+          fse = c < COLS-1 && r > 0      && grid[r-1][c+1] != :wall
+          fsw = c > 0      && r > 0      && grid[r-1][c-1] != :wall
+          fne = c < COLS-1 && r < ROWS-1 && grid[r+1][c+1] != :wall
+          fnw = c > 0      && r < ROWS-1 && grid[r+1][c-1] != :wall
 
-        next if fs || fn || fe || fw
-
-        fse = c < COLS-1 && r > 0        && grid[r-1][c+1] != :wall
-        fsw = c > 0      && r > 0        && grid[r-1][c-1] != :wall
-        fne = c < COLS-1 && r < ROWS-1   && grid[r+1][c+1] != :wall
-        fnw = c > 0      && r < ROWS-1   && grid[r+1][c-1] != :wall
-
-        rects << { x: tx + TILE_SIZE - STONE_FACE_PX, y: ty,                              w: STONE_FACE_PX, h: STONE_FACE_PX } if fse
-        rects << { x: tx,                             y: ty,                              w: STONE_FACE_PX, h: STONE_FACE_PX } if fsw
-        rects << { x: tx + TILE_SIZE - STONE_FACE_PX, y: ty + TILE_SIZE - STONE_FACE_PX,  w: STONE_FACE_PX, h: STONE_FACE_PX } if fne
-        rects << { x: tx,                             y: ty + TILE_SIZE - STONE_FACE_PX,  w: STONE_FACE_PX, h: STONE_FACE_PX } if fnw
+          if fse
+            rects << { x: tx + TILE_SIZE - STONE_FACE_PX, y: ty,                             w: STONE_FACE_PX, h: STONE_FACE_PX }
+          elsif fsw
+            rects << { x: tx,                             y: ty,                             w: STONE_FACE_PX, h: STONE_FACE_PX }
+          elsif fne
+            rects << { x: tx + TILE_SIZE - STONE_FACE_PX, y: ty + TILE_SIZE - STONE_FACE_PX, w: STONE_FACE_PX, h: STONE_FACE_PX }
+          elsif fnw
+            rects << { x: tx,                             y: ty + TILE_SIZE - STONE_FACE_PX, w: STONE_FACE_PX, h: STONE_FACE_PX }
+          end
+        end
       end
     end
     rects
