@@ -35,9 +35,9 @@ class TouchControls
       tick_joystick(lf)
       tick_buttons(rf)
     else
-      @touch_seen = true
       m    = args.inputs.mouse
       held = m.button_left
+      @touch_seen ||= held || args.gtk.platform?(:touch)
       @mouse_was_held = held
       tick_joystick(held && m.x < 700 ? m : nil)
       tick_buttons(held && m.x >= 700 ? m : nil)
