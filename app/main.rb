@@ -35,7 +35,11 @@ MODIFIER_POOL = [
   { key: :eager,        label: 'EAGER SHOGGOTHS', desc: 'Boids 25% faster' },
   { key: :keeper,       label: 'KEEPER OF TORCHES', desc: 'Sanity recovers 3x, -1 max HP' },
   { key: :dread_pace,   label: 'DREAD PACE',      desc: 'Shoggoths spawn twice as fast' },
-  { key: :watcher_kin,  label: 'WATCHER KIN',     desc: 'Some hunters are Watchers — slow, drain sanity' }
+  { key: :watcher_kin,  label: 'WATCHER KIN',     desc: 'Some hunters are Watchers — slow, drain sanity' },
+  { key: :miasma,       label: 'MIASMA',          desc: 'Sanity drains constantly — no safe ground' },
+  { key: :fecund,       label: 'FECUND DEPTHS',   desc: 'Shoggoths merge at half the threshold' },
+  { key: :idol_curse,   label: 'CURSED RELICS',   desc: 'Each held idol slowly drains sanity' },
+  { key: :scattered,    label: 'SCATTERED MINDS', desc: 'Start empty-handed — all idols hidden in the cave' },
 ].freeze
 MODIFIER_PICK = 3
 
@@ -113,11 +117,13 @@ def defaults(args)
   player_max_sanity = 100
   player_max_sanity += 50 if mk.include?(:fragile)
 
+  player_starting_idols = mk.include?(:scattered) ? 0 : STARTING_IDOLS
+
   args.state.player = Player.new(
     x: spawn[:x], y: spawn[:y],
     max_hp: [player_max_hp, 1].max,
     max_sanity: player_max_sanity,
-    starting_idols: STARTING_IDOLS
+    starting_idols: player_starting_idols
   )
   args.state.player.speed_scale          = 1.0
   args.state.player.speed_scale         *= 1.3 if mk.include?(:swift)
@@ -131,7 +137,10 @@ def defaults(args)
   args.state.boid_speed_mult = mk.include?(:eager)     ? 1.25 : 1.0
   args.state.spawn_scale     = mk.include?(:dread_pace) ? 0.5 : 1.0
   args.state.hunter_cap_bonus = mk.include?(:hunter_swarm) ? 2 : 0
-  args.state.allow_watchers = mk.include?(:watcher_kin)
+  args.state.allow_watchers  = mk.include?(:watcher_kin)
+  args.state.miasma          = mk.include?(:miasma)
+  args.state.merge_thresholds = mk.include?(:fecund) ? { 1 => 4, 2 => 2 } : { 1 => 8, 2 => 4 }
+  args.state.idol_curse      = mk.include?(:idol_curse)
 
   args.state.animator_factory = lambda {
     SpriteAnimator.new(
@@ -180,7 +189,7 @@ def defaults(args)
   args.state.bg_sprites = Cave.render(args.state.cave_grid) + props.map { |p| p[:sprite] }
 
   # Scatter the remaining idols across the cave so the player must explore.
-  scatter_count = IDOL_SLOTS - STARTING_IDOLS
+  scatter_count = IDOL_SLOTS - player_starting_idols
   scatter_cells = args.state.floor_cells.reject do |c, r|
     (c == cave_data[:spawn_col] && r == cave_data[:spawn_row]) ||
       (c == cave_data[:altar_col] && r == cave_data[:altar_row])
@@ -446,6 +455,8 @@ def calc(args)
   elsif at_altar || nearby_count == 0
     player.recover_sanity(0.03)
   end
+  player.drain_sanity(0.005) if args.state.miasma
+  player.drain_sanity(player.idols_held * 0.03) if args.state.idol_curse && player.idols_held > 0
 
   if player.dead? && !args.state.game_over
     args.state.game_over = true
@@ -477,6 +488,9 @@ def ensure_modifier_state(args)
   args.state.spawn_scale        ||= 1.0
   args.state.hunter_cap_bonus   ||= 0
   args.state.allow_watchers       = false if args.state.allow_watchers.nil?
+  args.state.miasma               = false if args.state.miasma.nil?
+  args.state.merge_thresholds   ||= { 1 => 8, 2 => 4 }
+  args.state.idol_curse           = false if args.state.idol_curse.nil?
   args.state.elapsed_ticks      ||= 0
   args.state.shake_timer        ||= 0
   args.state.total_merges       ||= 0
@@ -531,7 +545,7 @@ def check_merge(args)
   args.state.idols.each do |idol|
     next unless idol[:placed]
 
-    { 1 => 8, 2 => 4 }.each do |tier, threshold|
+    (args.state.merge_thresholds || { 1 => 8, 2 => 4 }).each do |tier, threshold|
       nearby = boids.select do |b|
         b.tier == tier &&
           (b.x - idol[:x])**2 + (b.y - idol[:y])**2 < merge_r_sq

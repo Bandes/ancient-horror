@@ -31,7 +31,18 @@ module FlowField
   def self.direction(field, wx, wy)
     return [0.0, 0.0] unless field
 
-    bc        = [wx.idiv(Cave::TILE_SIZE), wy.idiv(Cave::TILE_SIZE)]
+    col = wx.idiv(Cave::TILE_SIZE)
+    row = wy.idiv(Cave::TILE_SIZE)
+    bc  = [col, row]
+
+    # Boid may be in a wall tile (border or interior) — not in field.
+    # Walk outward until we find a reachable cell.
+    unless field.key?(bc)
+      bc = [[col,row-1],[col,row+1],[col-1,row],[col+1,row],
+            [col-1,row-1],[col+1,row-1],[col-1,row+1],[col+1,row+1]].find { |c| field.key?(c) }
+      return [0.0, 0.0] unless bc
+    end
+
     next_cell = field[bc]
     return [0.0, 0.0] unless next_cell
 

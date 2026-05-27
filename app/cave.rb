@@ -95,16 +95,19 @@ module Cave
     zones = [[INTERIOR_C1, INTERIOR_C2],
              [INTERIOR_C3, INTERIOR_C4],
              [INTERIOR_C5, INTERIOR_C6]].shuffle
-    zone_count = 2 + rand(2)   # 2 or 3
+    zone_count = 2 + Numeric.rand(2)   # 2 or 3
     i = 0
     while i < zone_count
       place_wall_segment(grid, zones[i][0], zones[i][1])
       i += 1
     end
 
-    # Fixed spawn/altar — open arena is always fully connected, no check needed
-    sc = 2;          sr = ROWS / 2
-    ac = COLS - 3;   ar = ROWS / 2
+    # Vary spawn/altar rows so travel paths differ each run
+    sc = 2;          sr = 2 + Numeric.rand(ROWS - 4)   # rows 2..ROWS-3
+    ac = COLS - 3;   ar = 2 + Numeric.rand(ROWS - 4)
+
+    # 0-2 extra short stubs for interior obstacle variety
+    Numeric.rand(3).times { place_stub(grid, sc, sr, ac, ar) }
 
     clear_around(grid, sc, sr)
     clear_around(grid, ac, ar)
@@ -115,11 +118,11 @@ module Cave
   # Carve a short wall segment (horizontal or vertical) somewhere in the zone.
   # Leaves at least one tile of gap at each end so flow is never fully blocked.
   def self.place_wall_segment(grid, col_min, col_max)
-    if rand < 0.5
+    if Numeric.rand < 0.5
       # Horizontal wall: pick a row, span most of the zone width, leave 1-tile gap at random end
-      row    = INTERIOR_R1 + rand(INTERIOR_R2 - INTERIOR_R1 + 1)
+      row    = INTERIOR_R1 + Numeric.rand(INTERIOR_R2 - INTERIOR_R1 + 1)
       length = col_max - col_min - 1   # leave 1 tile open
-      gap_at_start = rand < 0.5
+      gap_at_start = Numeric.rand < 0.5
       c_start = gap_at_start ? col_min + 1 : col_min
       c = c_start
       while c < c_start + length && c <= col_max && c.between?(1, COLS - 2)
@@ -128,15 +131,33 @@ module Cave
       end
     else
       # Vertical wall: full interior height minus 1-tile gap at random end
-      col    = col_min + rand(col_max - col_min + 1)
+      col    = col_min + Numeric.rand(col_max - col_min + 1)
       length = INTERIOR_R2 - INTERIOR_R1 - 1
-      gap_at_bottom = rand < 0.5
+      gap_at_bottom = Numeric.rand < 0.5
       r_start = gap_at_bottom ? INTERIOR_R1 + 1 : INTERIOR_R1
       r = r_start
       while r < r_start + length && r <= INTERIOR_R2 && r.between?(1, ROWS - 2)
         grid[r][col] = :wall if col.between?(1, COLS - 2)
         r += 1
       end
+    end
+  end
+
+  # Place a short 2-3 tile wall stub anywhere in the interior, clear of spawn/altar.
+  # Used for mid-arena obstacles; length is short enough to never fully block flow.
+  def self.place_stub(grid, sc, sr, ac, ar)
+    20.times do
+      col = 3 + Numeric.rand(COLS - 6)
+      row = INTERIOR_R1 + Numeric.rand(INTERIOR_R2 - INTERIOR_R1 + 1)
+      next if (col - sc).abs < 3 && (row - sr).abs < 3
+      next if (col - ac).abs < 3 && (row - ar).abs < 3
+      len = 2 + Numeric.rand(2)
+      if Numeric.rand < 0.5
+        len.times { |i| grid[row][col + i] = :wall if (col + i).between?(1, COLS - 2) }
+      else
+        len.times { |i| grid[row + i][col] = :wall if (row + i).between?(1, ROWS - 2) }
+      end
+      return
     end
   end
 
@@ -152,7 +173,7 @@ module Cave
       r += 1
     end
     return [nil, nil] if candidates.empty?
-    candidates[rand(candidates.length)]
+    candidates[Numeric.rand(candidates.length)]
   end
 
   def self.clear_around(grid, c, r)
@@ -223,7 +244,7 @@ module Cave
 
   def self.carve_corridor(grid, from_pos, to_pos)
     fx, fy = from_pos; tx, ty = to_pos
-    if rand < 0.5
+    if Numeric.rand < 0.5
       carve_h(grid, fy, [fx, tx].min, [fx, tx].max)
       carve_v(grid, tx, [fy, ty].min, [fy, ty].max)
     else

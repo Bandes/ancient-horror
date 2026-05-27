@@ -16,11 +16,11 @@ class Boid
     @x = x.to_f; @y = y.to_f
     @vx = vx.to_f; @vy = vy.to_f
     @bias_x = bias_x.to_f; @bias_y = bias_y.to_f
-    @wander_angle    = rand * Math::PI * 2
+    @wander_angle    = Numeric.rand * Math::PI * 2
     @speed_mult      = 1.0
     @speed_target    = 1.0
-    @impulse_cooldown = rand(120)
-    @spawn_timer      = rand(300)
+    @impulse_cooldown = Numeric.rand(120)
+    @spawn_timer      = Numeric.rand(300)
     @personality     = personality
     @animator        = animator
     @tier            = tier
@@ -72,16 +72,16 @@ module Flock
       cells = (1..Cave::ROWS - 2).flat_map { |r| (1..Cave::COLS - 2).map { |c| [c, r] } }
     end
     Array.new(count) do
-      angle      = rand * Math::PI * 2
-      speed      = MIN_SPEED + rand * (MAX_SPEED - MIN_SPEED)
-      bias_angle = rand * Math::PI * 2
+      angle      = Numeric.rand * Math::PI * 2
+      speed      = MIN_SPEED + Numeric.rand * (MAX_SPEED - MIN_SPEED)
+      bias_angle = Numeric.rand * Math::PI * 2
       col, row   = cells.sample
-      x = col * Cave::TILE_SIZE + Cave::TILE_SIZE / 2 + (rand - 0.5) * Cave::TILE_SIZE * 0.4
-      y = row * Cave::TILE_SIZE + Cave::TILE_SIZE / 2 + (rand - 0.5) * Cave::TILE_SIZE * 0.4
+      x = col * Cave::TILE_SIZE + Cave::TILE_SIZE / 2 + (Numeric.rand - 0.5) * Cave::TILE_SIZE * 0.4
+      y = row * Cave::TILE_SIZE + Cave::TILE_SIZE / 2 + (Numeric.rand - 0.5) * Cave::TILE_SIZE * 0.4
       personality = {
-        speed_scale:  0.75 + rand * 0.5,
-        wander_scale: 0.6  + rand * 0.8,
-        bias_scale:   0.5  + rand * 1.0
+        speed_scale:  0.75 + Numeric.rand * 0.5,
+        wander_scale: 0.6  + Numeric.rand * 0.8,
+        bias_scale:   0.5  + Numeric.rand * 1.0
       }
       Boid.new(
         x: x, y: y,
@@ -185,26 +185,26 @@ module Flock
       wander_scale = (near_idol || b.tier == 3) ? 0.05 : 1.0
       impulse_ok   = !(near_idol || b.tier == 3)
 
-      b.wander_angle += (rand - 0.5) * WANDER_ANGLE_STEP
+      b.wander_angle += (Numeric.rand - 0.5) * WANDER_ANGLE_STEP
       ax += Math.cos(b.wander_angle) * W_WANDER * b.personality[:wander_scale] * wander_scale
       ay += Math.sin(b.wander_angle) * W_WANDER * b.personality[:wander_scale] * wander_scale
 
       bias_f = W_BIAS * b.personality[:bias_scale] * wander_scale
       ax += b.bias_x * bias_f; ay += b.bias_y * bias_f
-      ba = Math.atan2(b.bias_y, b.bias_x) + (rand - 0.5) * BIAS_ANGLE_STEP
+      ba = Math.atan2(b.bias_y, b.bias_x) + (Numeric.rand - 0.5) * BIAS_ANGLE_STEP
       b.bias_x = Math.cos(ba); b.bias_y = Math.sin(ba)
 
       if b.impulse_cooldown > 0
         b.impulse_cooldown -= 1
-      elsif impulse_ok && rand < IMPULSE_CHANCE
-        ia = rand * Math::PI * 2
+      elsif impulse_ok && Numeric.rand < IMPULSE_CHANCE
+        ia = Numeric.rand * Math::PI * 2
         ax += Math.cos(ia) * IMPULSE_FORCE
         ay += Math.sin(ia) * IMPULSE_FORCE
         b.wander_angle = ia
-        b.impulse_cooldown = IMPULSE_MIN_COOLDOWN + rand(180)
+        b.impulse_cooldown = IMPULSE_MIN_COOLDOWN + Numeric.rand(180)
       end
 
-      b.speed_target += (rand - 0.5) * SPEED_TARGET_STEP
+      b.speed_target += (Numeric.rand - 0.5) * SPEED_TARGET_STEP
       b.speed_target  = b.speed_target.clamp(SPEED_MULT_MIN, SPEED_MULT_MAX)
       b.speed_mult   += (b.speed_target - b.speed_mult) * 0.05
 
@@ -212,10 +212,17 @@ module Flock
       if b.tier == 3
         sx, sy = steer_to(seek_dx, seek_dy, b.vx, b.vy)
         ax += sx * (near_idol ? 5.0 : 3.5); ay += sy * (near_idol ? 5.0 : 3.5)
+      elsif near_idol
+        sx, sy = steer_to(seek_dx, seek_dy, b.vx, b.vy)
+        ax += sx * 5.0; ay += sy * 5.0
       elsif best_d2 < IDOL_ATTRACT_RADIUS_SQ
         sx, sy = steer_to(seek_dx, seek_dy, b.vx, b.vy)
-        weight = near_idol ? 5.0 : (0.6 * (1.0 - Math.sqrt(best_d2) / Math.sqrt(IDOL_ATTRACT_RADIUS_SQ)))
+        weight = 0.6 * (1.0 - Math.sqrt(best_d2) / Math.sqrt(IDOL_ATTRACT_RADIUS_SQ))
         ax += sx * weight; ay += sy * weight
+      else
+        # No idol in range — weak flow-toward-player prevents corner sticking
+        sx, sy = steer_to(seek_dx, seek_dy, b.vx, b.vy)
+        ax += sx * 0.3; ay += sy * 0.3
       end
 
       # Panic flee from hunters (tier 1+2 only; tier 3 is bigger than they are)
