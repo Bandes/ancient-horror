@@ -361,6 +361,7 @@ def calc(args)
       h.take_hit
     end
     args.state.repel_flash = 14
+    args.state.shake_timer = 10
   end
   args.state.repel_flash = [(args.state.repel_flash || 0) - 1, 0].max
 
@@ -452,6 +453,13 @@ def calc(args)
   end
 
   args.state.elapsed_ticks += 1
+
+  cur_step = args.state.elapsed_ticks.idiv(ESCALATE_INTERVAL)
+  if cur_step > args.state.last_escalate_step
+    args.state.last_escalate_step = cur_step
+    args.state.escalate_flash = 240
+  end
+
   interval = effective_spawn_interval(args)
   return unless args.state.boids.length < MAX_SHOGGOTHS && Kernel.tick_count % interval == 0
 
@@ -470,6 +478,10 @@ def ensure_modifier_state(args)
   args.state.hunter_cap_bonus   ||= 0
   args.state.allow_watchers       = false if args.state.allow_watchers.nil?
   args.state.elapsed_ticks      ||= 0
+  args.state.shake_timer        ||= 0
+  args.state.total_merges       ||= 0
+  args.state.last_escalate_step ||= 0
+  args.state.escalate_flash     ||= 0
 end
 
 def effective_spawn_interval(args)
@@ -546,6 +558,7 @@ def check_merge(args)
 
       idol[:placed] = false
       args.state.player.idols_held += 1
+      args.state.total_merges += 1
       break
     end
   end
@@ -727,8 +740,13 @@ def win_screen(args)
                            alignment_enum: 1, size_enum: 8, r: 180, g: 80, b: 255, a: text_a }
   args.outputs.labels << { x: 640, y: 485, text: 'THE WORLD IS UNMADE',
                            alignment_enum: 1, size_enum: 4, r: 220, g: 160, b: 255, a: text_a }
-  args.outputs.labels << { x: 640, y: 120, text: "Ritual completed in #{time_str}",
+  args.outputs.labels << { x: 640, y: 148, text: "Ritual completed in #{time_str}   Merges: #{args.state.total_merges || 0}",
                            alignment_enum: 1, size_enum: 1, r: 180, g: 140, b: 255, a: text_a }
+  mods = args.state.modifiers || []
+  unless mods.empty?
+    args.outputs.labels << { x: 640, y: 122, text: 'Omens: ' + mods.map { |m| m[:label] }.join('  ·  '),
+                             alignment_enum: 1, size_enum: -2, r: 200, g: 180, b: 120, a: text_a }
+  end
   args.outputs.labels << { x: 640, y: 80, text: 'press any key or click to play again',
                            alignment_enum: 1, r: 140, g: 140, b: 160, a: text_a }
   kd = args.inputs.keyboard.key_down
@@ -781,7 +799,10 @@ def check_infighting(args)
       emit_particles(args, prey.x, prey.y, 8, r: 80, g: 210, b: 80, speed: 1.5, size: 4)
     end
   end
-  args.state.boids -= eaten unless eaten.empty?
+  unless eaten.empty?
+    args.state.boids -= eaten
+    args.state.sound.play(args, :great_one_eat)
+  end
 
   args.state.hunters.reject! do |h|
     args.state.boids.any? do |b|
@@ -841,6 +862,7 @@ def tick_hunters(args)
         idol[:placed] = false
         player.idols_held += 1
         emit_particles(args, idol[:x], idol[:y], 14, r: 255, g: 100, b: 20, speed: 2.5, size: 5)
+        args.state.sound.play(args, :idol_stolen)
       end
     end
 
@@ -866,13 +888,17 @@ def spawn_hunter(args)
   col, row = (far.empty? ? args.state.floor_cells : far).sample
   return unless col
 
+  hx = col * Cave::TILE_SIZE + Cave::TILE_SIZE / 2
+  hy = row * Cave::TILE_SIZE + Cave::TILE_SIZE / 2
   kind = args.state.allow_watchers && rand < 0.4 ? :watcher : :inquisitor
   args.state.hunters << Hunter.new(
-    x: col * Cave::TILE_SIZE + Cave::TILE_SIZE / 2,
-    y: row * Cave::TILE_SIZE + Cave::TILE_SIZE / 2,
+    x: hx, y: hy,
     animator: args.state.hunter_animator_factory.call,
     kind: kind
   )
+  cr, cg = kind == :watcher ? [60, 220] : [220, 60]
+  emit_particles(args, hx, hy, 16, r: cr, g: cg, b: 40, speed: 2.5, size: 5)
+  args.state.sound.play(args, :hunter_spawn)
 end
 
 def render_base(args)
@@ -883,105 +909,114 @@ def render_base(args)
 end
 
 def render(args)
-  args.outputs.sprites << args.state.bg_sprites
-  render_corruption(args)
-  render_altar(args)
-  render_idols(args)
+  # Screen shake
+  args.state.shake_timer = [(args.state.shake_timer || 0) - 1, 0].max
+  sx = 0; sy = 0
+  if args.state.shake_timer > 0
+    mag = args.state.shake_timer * 1.5
+    sx = Numeric.rand(-mag.to_i..mag.to_i)
+    sy = Numeric.rand(-mag.to_i..mag.to_i)
+  end
 
-  args.outputs.sprites << (args.state.particles || [])
-  args.outputs.sprites << (args.state.boids || []).map { |b| b.render(Kernel.tick_count) }
-  args.outputs.sprites << (args.state.hunters || []).map { |h| h.render(Kernel.tick_count) }
-  args.outputs.sprites << args.state.player.render(Kernel.tick_count, sanity_pct: args.state.player.sanity_pct)
+  # World render target
+  wo = args.outputs[:world]
+  wo.w = 1280; wo.h = 720
+  wo.background_color = [0, 0, 0]
+  wo.sprites << args.state.bg_sprites
+  render_corruption(wo, args)
+  render_altar(wo, args)
+  render_idols(wo, args)
+  wo.sprites << (args.state.particles || [])
+  wo.sprites << (args.state.boids || []).map { |b| b.render(Kernel.tick_count) }
+  wo.sprites << (args.state.hunters || []).map { |h| h.render(Kernel.tick_count) }
+  wo.sprites << args.state.player.render(Kernel.tick_count, sanity_pct: args.state.player.sanity_pct)
 
-  # Repel flash — white-green shockwave feel
   if (args.state.repel_flash || 0) > 0
     a = (args.state.repel_flash * 12).clamp(0, 140)
-    args.outputs.sprites << { x: 0, y: 0, w: 1280, h: 720, path: :solid, r: 200, g: 255, b: 220, a: a,
-                              blendmode_enum: 1 }
+    wo.sprites << { x: 0, y: 0, w: 1280, h: 720, path: :solid, r: 200, g: 255, b: 220, a: a, blendmode_enum: 1 }
   end
-
-  # Merge flash
   if (args.state.merge_flash || 0) > 0
     a = (args.state.merge_flash * 25).clamp(0, 120)
-    args.outputs.sprites << { x: 0, y: 0, w: 1280, h: 720, path: :solid, r: 160, g: 255, b: 180, a: a }
+    wo.sprites << { x: 0, y: 0, w: 1280, h: 720, path: :solid, r: 160, g: 255, b: 180, a: a }
   end
 
+  args.outputs.sprites << { x: sx, y: sy, w: 1280, h: 720, path: :world }
   render_hud(args)
 end
 
-def render_corruption(args)
+def render_corruption(out, args)
   stage = args.state.ritual_stage
-  return if stage <= 0
 
-  pulse = Math.sin(Kernel.tick_count * 0.03) * 0.5 + 0.5
-  a = (stage * 22 + pulse * 14).to_i
-  args.outputs.sprites << {
-    x: 0, y: 0, w: 1280, h: 720, path: :solid,
-    r: 80, g: 10, b: 110, a: a, blendmode_enum: 1
-  }
-  # Low-sanity vignette — pulls in as sanity drops
+  if stage > 0
+    pulse = Math.sin(Kernel.tick_count * 0.03) * 0.5 + 0.5
+    a = (stage * 22 + pulse * 14).to_i
+    out.sprites << { x: 0, y: 0, w: 1280, h: 720, path: :solid, r: 80, g: 10, b: 110, a: a, blendmode_enum: 1 }
+  end
+
   sp = args.state.player.sanity_pct
   return unless sp < 0.5
 
+  # Below 50%: red vignette deepens
   sv = ((0.5 - sp) * 2).clamp(0, 1)
-  args.outputs.sprites << {
-    x: 0, y: 0, w: 1280, h: 720, path: :solid,
-    r: 30, g: 0, b: 0, a: (sv * 100).to_i, blendmode_enum: 1
-  }
+  out.sprites << { x: 0, y: 0, w: 1280, h: 720, path: :solid, r: 30, g: 0, b: 0, a: (sv * 100).to_i, blendmode_enum: 1 }
+
+  return unless sp < 0.25
+
+  # Below 25%: violent pulsing crimson wash + desaturation effect
+  crisis = ((0.25 - sp) * 4).clamp(0, 1)
+  pulse2 = (Math.sin(Kernel.tick_count * 0.12) * 0.5 + 0.5) ** 2
+  flash_a = (crisis * 80 + pulse2 * crisis * 60).to_i
+  out.sprites << { x: 0, y: 0, w: 1280, h: 720, path: :solid, r: 180, g: 0, b: 20, a: flash_a, blendmode_enum: 1 }
+  # Darkening corners — 4 gradient-ish corner rects
+  edge_a = (crisis * 120).to_i
+  corner = (crisis * 320).to_i
+  out.sprites << { x: 0,          y: 0,          w: corner, h: corner, path: :solid, r: 0, g: 0, b: 0, a: edge_a }
+  out.sprites << { x: 1280-corner, y: 0,          w: corner, h: corner, path: :solid, r: 0, g: 0, b: 0, a: edge_a }
+  out.sprites << { x: 0,          y: 720-corner, w: corner, h: corner, path: :solid, r: 0, g: 0, b: 0, a: edge_a }
+  out.sprites << { x: 1280-corner, y: 720-corner, w: corner, h: corner, path: :solid, r: 0, g: 0, b: 0, a: edge_a }
 end
 
 ALTAR_SPRITE_W = 80
 ALTAR_SPRITE_H = 80
 
-def render_altar(args)
+def render_altar(out, args)
   ax = args.state.altar_x
   ay = args.state.altar_y
   stage = args.state.ritual_stage
   pulse = (Math.sin(Kernel.tick_count * 0.08) * 0.5 + 0.5)
 
-  # Glow behind the sprite, intensifies with ritual stage
   base_r = 60 + stage * 40
   base_g = 20 + stage * 10
   base_b = 160 + stage * 25
   glow_a = (80 + stage * 35 + pulse * 40).to_i.clamp(0, 255)
   glow_size = (ALTAR_SPRITE_W * 1.6 + stage * 8 + pulse * 6).to_i
-  args.outputs.sprites << {
-    x: ax - glow_size / 2, y: ay - glow_size / 2, w: glow_size, h: glow_size,
-    path: :solid, r: base_r, g: base_g, b: base_b, a: glow_a
-  }
+  out.sprites << { x: ax - glow_size / 2, y: ay - glow_size / 2, w: glow_size, h: glow_size,
+                   path: :solid, r: base_r, g: base_g, b: base_b, a: glow_a }
 
-  # Altar sprite — tinted green as ritual advances
   tint_g = (180 + stage * 25).clamp(0, 255)
-  args.outputs.sprites << {
-    x: ax - ALTAR_SPRITE_W / 2, y: ay - ALTAR_SPRITE_H / 2,
-    w: ALTAR_SPRITE_W, h: ALTAR_SPRITE_H,
-    path: 'sprites/altar.png',
-    r: 255, g: tint_g, b: 255, a: 255, blendmode_enum: 1
-  }
+  out.sprites << { x: ax - ALTAR_SPRITE_W / 2, y: ay - ALTAR_SPRITE_H / 2,
+                   w: ALTAR_SPRITE_W, h: ALTAR_SPRITE_H,
+                   path: 'sprites/altar.png', r: 255, g: tint_g, b: 255, a: 255, blendmode_enum: 1 }
 
-  # Summoning progress bar above altar
   return unless args.state.summon_ticks > 0
 
   pct   = args.state.summon_ticks.to_f / SUMMON_TICKS_NEEDED
   bar_w = 80
   bar_y = ay + ALTAR_SPRITE_H / 2 + 6
-  args.outputs.sprites << { x: ax - bar_w / 2, y: bar_y, w: bar_w, h: 6,
-                            path: :solid, r: 40, g: 40, b: 40, a: 200 }
-  args.outputs.sprites << { x: ax - bar_w / 2, y: bar_y, w: (bar_w * pct).to_i, h: 6,
-                            path: :solid, r: 180, g: 80, b: 255, a: 255 }
-  args.outputs.labels << { x: ax, y: bar_y + 16, text: 'HOLD!',
-                           alignment_enum: 1, size_enum: -2, r: 220, g: 150, b: 255, a: 255 }
+  out.sprites << { x: ax - bar_w / 2, y: bar_y, w: bar_w, h: 6, path: :solid, r: 40, g: 40, b: 40, a: 200 }
+  out.sprites << { x: ax - bar_w / 2, y: bar_y, w: (bar_w * pct).to_i, h: 6,
+                   path: :solid, r: 180, g: 80, b: 255, a: 255 }
+  out.labels  << { x: ax, y: bar_y + 16, text: 'HOLD!', alignment_enum: 1, size_enum: -2, r: 220, g: 150, b: 255, a: 255 }
 end
 
 IDOL_W = 41
 IDOL_H = 64
 
-def render_idols(args)
+def render_idols(out, args)
   merge_r = Cave::MERGE_RADIUS
   args.state.idols.each do |idol|
     next unless idol[:placed]
 
-    # Count nearby shoggoths per tier
     near_small = 0
     near_medium = 0
     args.state.boids.each do |b|
@@ -993,7 +1028,6 @@ def render_idols(args)
       near_medium += 1 if b.tier == 2
     end
 
-    # Ring color: dim gray → bright green as closest tier approaches threshold
     small_pct  = near_small.to_f  / Cave::MERGE_THRESHOLD_SMALL
     medium_pct = near_medium.to_f / Cave::MERGE_THRESHOLD_MEDIUM
     best_pct   = [small_pct, medium_pct, 0.0].max.clamp(0.0, 1.0)
@@ -1002,37 +1036,29 @@ def render_idols(args)
     ring_b = 60
     ring_a = (55 + best_pct * 160).to_i.clamp(0, 255)
 
-    # Dashed ring: 32 dots around circumference
     32.times do |i|
-      next if i.odd? && best_pct < 0.25 # sparse when nearly empty
+      next if i.odd? && best_pct < 0.25
 
       angle = i * Math::PI * 2 / 32
       rx = idol[:x] + Math.cos(angle) * merge_r
       ry = idol[:y] + Math.sin(angle) * merge_r
-      args.outputs.sprites << { x: rx - 2, y: ry - 2, w: 4, h: 4, path: :solid,
-                                r: ring_r, g: ring_g, b: ring_b, a: ring_a, blendmode_enum: 1 }
+      out.sprites << { x: rx - 2, y: ry - 2, w: 4, h: 4, path: :solid,
+                       r: ring_r, g: ring_g, b: ring_b, a: ring_a, blendmode_enum: 1 }
     end
 
-    # Count label beneath idol
     parts = []
     parts << "#{near_small}/#{Cave::MERGE_THRESHOLD_SMALL}s" if near_small > 0
     parts << "#{near_medium}/#{Cave::MERGE_THRESHOLD_MEDIUM}m" if near_medium > 0
     unless parts.empty?
-      args.outputs.labels << {
-        x: idol[:x], y: idol[:y] - IDOL_H / 2 - 4,
-        text: parts.join('  '),
-        alignment_enum: 1, size_enum: -3,
-        r: ring_r, g: ring_g, b: 100, a: 230
-      }
+      out.labels << { x: idol[:x], y: idol[:y] - IDOL_H / 2 - 4,
+                      text: parts.join('  '), alignment_enum: 1, size_enum: -3,
+                      r: ring_r, g: ring_g, b: 100, a: 230 }
     end
 
     pulse = (Math.sin(Kernel.tick_count * 0.12) * 30 + 220).to_i
-    args.outputs.sprites << {
-      x: idol[:x] - IDOL_W / 2, y: idol[:y] - IDOL_H / 2,
-      w: IDOL_W, h: IDOL_H,
-      path: 'sprites/idol.png',
-      r: pulse, g: pulse, b: 80, a: 255, blendmode_enum: 1
-    }
+    out.sprites << { x: idol[:x] - IDOL_W / 2, y: idol[:y] - IDOL_H / 2,
+                     w: IDOL_W, h: IDOL_H, path: 'sprites/idol.png',
+                     r: pulse, g: pulse, b: 80, a: 255, blendmode_enum: 1 }
   end
 end
 
@@ -1091,23 +1117,20 @@ def pause_menu(args)
     end
   end
 
-  # Dark overlay
-  args.outputs.sprites << { x: 0, y: 0, w: 1280, h: 720, path: :solid,
-                            r: 0, g: 0, b: 0, a: 160 }
+  mods = args.state.modifiers || []
 
-  # Panel background + border
-  px = 440
-  py = 255
-  pw = 400
-  ph = 210
-  args.outputs.sprites  << { x: px, y: py, w: pw, h: ph, path: :solid,
-                             r: 12, g: 8, b: 28, a: 235 }
-  args.outputs.borders  << { x: px, y: py, w: pw, h: ph,
-                             r: 100, g: 60, b: 180, a: 200 }
+  args.outputs.sprites << { x: 0, y: 0, w: 1280, h: 720, path: :solid, r: 0, g: 0, b: 0, a: 160 }
+
+  panel_x = 440; panel_w = 400
+  panel_h = 210 + (mods.empty? ? 0 : 28 + mods.length * 18)
+  panel_y = 255 - (mods.empty? ? 0 : 28 + mods.length * 18)
+  args.outputs.sprites << { x: panel_x, y: panel_y, w: panel_w, h: panel_h, path: :solid,
+                            r: 12, g: 8, b: 28, a: 235 }
+  args.outputs.borders << { x: panel_x, y: panel_y, w: panel_w, h: panel_h,
+                            r: 100, g: 60, b: 180, a: 200 }
 
   args.outputs.labels << { x: 640, y: 445, text: 'PAUSED',
-                           alignment_enum: 1, size_enum: 6,
-                           r: 200, g: 160, b: 255, a: 255 }
+                           alignment_enum: 1, size_enum: 6, r: 200, g: 160, b: 255, a: 255 }
 
   labels = %w[MUSIC EFFECTS]
   vols   = [sound.music_vol, sound.sfx_vol]
@@ -1117,13 +1140,9 @@ def pause_menu(args)
     lr = active ? 255 : 150
     lg = active ? 220 : 140
     lb = active ? 255 : 170
-
     args.outputs.labels << { x: 490, y: row_y + 12, text: labels[i],
                              size_enum: 1, r: lr, g: lg, b: lb, a: 255 }
-
-    bar_x = 590
-    bar_w = 190
-    bar_h = 16
+    bar_x = 590; bar_w = 190; bar_h = 16
     fill_w = (bar_w * vols[i]).to_i
     args.outputs.sprites << { x: bar_x, y: row_y, w: bar_w, h: bar_h,
                               path: :solid, r: 35, g: 25, b: 55, a: 220 }
@@ -1135,8 +1154,18 @@ def pause_menu(args)
   end
 
   args.outputs.labels << { x: 640, y: 272, text: '← → adjust   ↑ ↓ select   ESC resume',
-                           alignment_enum: 1, size_enum: -2,
-                           r: 120, g: 100, b: 155, a: 200 }
+                           alignment_enum: 1, size_enum: -2, r: 120, g: 100, b: 155, a: 200 }
+
+  unless mods.empty?
+    args.outputs.labels << { x: 640, y: 258, text: 'OMENS',
+                             alignment_enum: 1, size_enum: -2, r: 200, g: 180, b: 100, a: 200 }
+    mods.each_with_index do |m, i|
+      args.outputs.labels << { x: 640, y: 242 - i * 18,
+                               text: "#{m[:label]} — #{m[:desc]}",
+                               alignment_enum: 1, size_enum: -3,
+                               r: 220, g: 200, b: 130, a: 220 }
+    end
+  end
 end
 
 def render_hud(args)
@@ -1210,9 +1239,16 @@ def render_hud(args)
                  'Altar: CONVERGE AND HOLD'
                end
   stage_r = [80 + stage * 50, 255].min
-  args.outputs.labels << {
-    x: 1270, y: 30,
-    text: stage_text,
-    alignment_enum: 2, r: stage_r, g: 80, b: 220, a: 255
-  }
+  args.outputs.labels << { x: 1270, y: 30, text: stage_text,
+                           alignment_enum: 2, r: stage_r, g: 80, b: 220, a: 255 }
+
+  # Escalation warning flash
+  if (args.state.escalate_flash || 0) > 0
+    ef = args.state.escalate_flash
+    a = [ef * 4, 255].min
+    args.outputs.labels << { x: 640, y: 380, text: 'THE DARKNESS STIRS',
+                             alignment_enum: 1, size_enum: 4, r: 220, g: 50, b: 50, a: a }
+    args.state.escalate_flash = ef - 1
+  end
+
 end

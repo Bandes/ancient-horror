@@ -5,14 +5,17 @@ class Sound
   }.freeze
 
   SFX = {
-    merge_small: 'sounds/effects/creature_merge.ogg',
-    merge_large: 'sounds/effects/creature_merge.ogg',
-    player_hit: 'sounds/effects/take_hit.wav',
-    repel: 'sounds/effects/eldritch_abomination_roar.ogg',
-    idol_place: 'sounds/effects/eldritch_abomination_single_breath.ogg',
-    idol_pickup: 'sounds/effects/eldritch_abomination_single_breath.ogg',
-    hunter_die: 'sounds/effects/monster_frothy_growl.ogg',
-    ritual_tick: 'sounds/effects/eldritch_abomination_heart_beat.ogg'
+    merge_small:   'sounds/effects/creature_merge.ogg',
+    merge_large:   'sounds/effects/creature_merge.ogg',
+    player_hit:    'sounds/effects/take_hit.ogg',
+    repel:         'sounds/effects/eldritch_abomination_roar.ogg',
+    idol_place:    'sounds/effects/eldritch_abomination_single_breath.ogg',
+    idol_pickup:   'sounds/effects/eldritch_abomination_growl.ogg',
+    idol_stolen:   'sounds/effects/monster_hiss_1.ogg',
+    hunter_spawn:  'sounds/effects/cosmic_horror_rumble_5.ogg',
+    great_one_eat: 'sounds/effects/monster_roar_22.ogg',
+    hunter_die:    'sounds/effects/monster_frothy_growl.ogg',
+    ritual_tick:   'sounds/effects/eldritch_abomination_heart_beat.ogg'
   }.freeze
 
   AMBIENT_GROUPS = {
