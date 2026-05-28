@@ -13,9 +13,12 @@ class Boid
                 :tier
 
   def initialize(x:, y:, vx:, vy:, bias_x:, bias_y:, animator:, personality:, tier: 1)
-    @x = x.to_f; @y = y.to_f
-    @vx = vx.to_f; @vy = vy.to_f
-    @bias_x = bias_x.to_f; @bias_y = bias_y.to_f
+    @x = x.to_f
+    @y = y.to_f
+    @vx = vx.to_f
+    @vy = vy.to_f
+    @bias_x = bias_x.to_f
+    @bias_y = bias_y.to_f
     @wander_angle    = Numeric.rand * Math::PI * 2
     @speed_mult      = 1.0
     @speed_target    = 1.0
@@ -61,6 +64,11 @@ module Flock
 
   COLLISION_DAMP       = 0.5
 
+  BORDER_AVOID_R = 80.0
+  W_BORDER_AVOID = 0.04
+  WALL_AVOID_R   = 45.0
+  W_WALL_AVOID   = 0.03
+
   IDOL_ATTRACT_RADIUS_SQ   = 400 * 400
   PLAYER_ATTRACT_RADIUS_SQ = 220 * 220
   W_PLAYER                 = 0.12
@@ -68,9 +76,7 @@ module Flock
   def self.spawn(count, animator_factory, cave_grid:)
     cells = Cave.floor_cells(cave_grid)
     # Fallback if cave generation produced no floor cells
-    if cells.empty?
-      cells = (1..Cave::ROWS - 2).flat_map { |r| (1..Cave::COLS - 2).map { |c| [c, r] } }
-    end
+    cells = (1..Cave::ROWS - 2).flat_map { |r| (1..Cave::COLS - 2).map { |c| [c, r] } } if cells.empty?
     Array.new(count) do
       angle      = Numeric.rand * Math::PI * 2
       speed      = MIN_SPEED + Numeric.rand * (MAX_SPEED - MIN_SPEED)
@@ -79,9 +85,9 @@ module Flock
       x = col * Cave::TILE_SIZE + Cave::TILE_SIZE / 2 + (Numeric.rand - 0.5) * Cave::TILE_SIZE * 0.4
       y = row * Cave::TILE_SIZE + Cave::TILE_SIZE / 2 + (Numeric.rand - 0.5) * Cave::TILE_SIZE * 0.4
       personality = {
-        speed_scale:  0.75 + Numeric.rand * 0.5,
-        wander_scale: 0.6  + Numeric.rand * 0.8,
-        bias_scale:   0.5  + Numeric.rand * 1.0
+        speed_scale: 0.75 + Numeric.rand * 0.5,
+        wander_scale: 0.6 + Numeric.rand * 0.8,
+        bias_scale: 0.5 + Numeric.rand * 1.0
       }
       Boid.new(
         x: x, y: y,
@@ -101,10 +107,10 @@ module Flock
   W_HUNTER_FLEE    = 2.4
 
   def self.step(boids, cave_grid:, idols:, altar_x:, altar_y:, player_x:, player_y:,
-               ritual_stage: 0, hunters: [], speed_mult: 1.0,
-               flow_altar: nil, flow_player: nil, flow_idols: nil,
-               wall_rects: [])
-    speed_boost   = (1.0 + ritual_stage * 0.15) * speed_mult
+                ritual_stage: 0, hunters: [], speed_mult: 1.0,
+                flow_altar: nil, flow_player: nil, flow_idols: nil,
+                wall_rects: [])
+    speed_boost = (1.0 + ritual_stage * 0.15) * speed_mult
     player_w_boost = 1.0 + ritual_stage * 0.25
     perception_sq = PERCEPTION * PERCEPTION
     sep_sq        = SEPARATION_R * SEPARATION_R
@@ -117,42 +123,83 @@ module Flock
 
       boids.each_with_index do |o, j|
         next if i == j
-        dx = o.x - b.x; dy = o.y - b.y
+
+        dx = o.x - b.x
+        dy = o.y - b.y
         d2 = dx * dx + dy * dy
         next if d2 > perception_sq || d2 < 0.0001
+
         n_neighbors += 1
-        ali_x += o.vx; ali_y += o.vy
-        coh_x += b.x + dx; coh_y += b.y + dy
-        if d2 < sep_sq
-          sep_x -= dx / d2; sep_y -= dy / d2
-          n_sep += 1
-        end
+        ali_x += o.vx
+        ali_y += o.vy
+        coh_x += b.x + dx
+        coh_y += b.y + dy
+        next unless d2 < sep_sq
+
+        sep_x -= dx / d2
+        sep_y -= dy / d2
+        n_sep += 1
       end
 
       ax = ay = 0.0
 
       if n_neighbors > 0
-        ali_x /= n_neighbors; ali_y /= n_neighbors
+        ali_x /= n_neighbors
+        ali_y /= n_neighbors
         sx, sy = steer_to(ali_x, ali_y, b.vx, b.vy)
-        ax += sx * W_ALIGN; ay += sy * W_ALIGN
-        coh_x /= n_neighbors; coh_y /= n_neighbors
+        ax += sx * W_ALIGN
+        ay += sy * W_ALIGN
+        coh_x /= n_neighbors
+        coh_y /= n_neighbors
         sx, sy = steer_to(coh_x - b.x, coh_y - b.y, b.vx, b.vy)
-        ax += sx * W_COH; ay += sy * W_COH
+        ax += sx * W_COH
+        ay += sy * W_COH
       end
 
       if n_sep > 0
-        sep_x /= n_sep; sep_y /= n_sep
+        sep_x /= n_sep
+        sep_y /= n_sep
         sx, sy = steer_to(sep_x, sep_y, b.vx, b.vy)
-        ax += sx * W_SEP; ay += sy * W_SEP
+        ax += sx * W_SEP
+        ay += sy * W_SEP
+      end
+
+      # Screen border repulsion — border walls are not in wall_rects so need explicit check
+      bp = Cave::STONE_FACE_PX.to_f
+      cr = b.collision_r.to_f
+      dl = b.x - (bp + cr)
+      ax += W_BORDER_AVOID * (1.0 - dl / BORDER_AVOID_R) if dl < BORDER_AVOID_R
+      dr = 1280.0 - bp - cr - b.x
+      ax -= W_BORDER_AVOID * (1.0 - dr / BORDER_AVOID_R) if dr < BORDER_AVOID_R
+      db = b.y - (bp + cr)
+      ay += W_BORDER_AVOID * (1.0 - db / BORDER_AVOID_R) if db < BORDER_AVOID_R
+      dt = 720.0 - bp - cr - b.y
+      ay -= W_BORDER_AVOID * (1.0 - dt / BORDER_AVOID_R) if dt < BORDER_AVOID_R
+
+      # Interior wall repulsion — proactive avoidance before collision
+      wall_rects.each do |rect|
+        nx = b.x.clamp(rect[:x], rect[:x] + rect[:w])
+        ny = b.y.clamp(rect[:y], rect[:y] + rect[:h])
+        dx = b.x - nx
+        dy = b.y - ny
+        d2 = dx * dx + dy * dy
+        next if d2 > WALL_AVOID_R * WALL_AVOID_R || d2 < 0.0001
+
+        d  = Math.sqrt(d2)
+        st = W_WALL_AVOID * (1.0 - d / WALL_AVOID_R)
+        ax += dx / d * st
+        ay += dy / d * st
       end
 
       # Find nearest placed idol (tier 1+2) or best target for tier 3
       near_idol = false
       nearest_idol_idx = nil
       if b.tier == 3
-        altar_dx = altar_x - b.x; altar_dy = altar_y - b.y
+        altar_dx = altar_x - b.x
+        altar_dy = altar_y - b.y
         altar_d2 = altar_dx * altar_dx + altar_dy * altar_dy
-        pdx = player_x - b.x; pdy = player_y - b.y
+        pdx = player_x - b.x
+        pdy = player_y - b.y
         pd2 = pdx * pdx + pdy * pdy
         targeting_player = pd2 < altar_d2
         best_dx = targeting_player ? pdx : altar_dx
@@ -165,24 +212,28 @@ module Flock
         best_dx = best_dy = 0.0
         idols.each_with_index do |idol, idx|
           next unless idol[:placed]
-          dx = idol[:x] - b.x; dy = idol[:y] - b.y
+
+          dx = idol[:x] - b.x
+          dy = idol[:y] - b.y
           d2 = dx * dx + dy * dy
-          if d2 < best_d2
-            best_d2 = d2; best_dx = dx; best_dy = dy
-            nearest_idol_idx = idx
-          end
+          next unless d2 < best_d2
+
+          best_d2 = d2
+          best_dx = dx
+          best_dy = dy
+          nearest_idol_idx = idx
         end
         near_idol = best_d2 < Cave::MERGE_RADIUS * Cave::MERGE_RADIUS
-        seek_field = (nearest_idol_idx && flow_idols) ? flow_idols[nearest_idol_idx] : flow_player
+        seek_field = nearest_idol_idx && flow_idols ? flow_idols[nearest_idol_idx] : flow_player
       end
 
       # Flow-field overrides direct seek direction when a path exists
       fdx, fdy = FlowField.direction(seek_field, b.x, b.y)
-      seek_dx = (fdx != 0.0 || fdy != 0.0) ? fdx : best_dx
-      seek_dy = (fdx != 0.0 || fdy != 0.0) ? fdy : best_dy
+      seek_dx = fdx != 0.0 || fdy != 0.0 ? fdx : best_dx
+      seek_dy = fdx != 0.0 || fdy != 0.0 ? fdy : best_dy
 
       # Tier 3 always marches — suppress wander and impulses entirely
-      wander_scale = (near_idol || b.tier == 3) ? 0.05 : 1.0
+      wander_scale = near_idol || b.tier == 3 ? 0.05 : 1.0
       impulse_ok   = !(near_idol || b.tier == 3)
 
       b.wander_angle += (Numeric.rand - 0.5) * WANDER_ANGLE_STEP
@@ -190,9 +241,11 @@ module Flock
       ay += Math.sin(b.wander_angle) * W_WANDER * b.personality[:wander_scale] * wander_scale
 
       bias_f = W_BIAS * b.personality[:bias_scale] * wander_scale
-      ax += b.bias_x * bias_f; ay += b.bias_y * bias_f
+      ax += b.bias_x * bias_f
+      ay += b.bias_y * bias_f
       ba = Math.atan2(b.bias_y, b.bias_x) + (Numeric.rand - 0.5) * BIAS_ANGLE_STEP
-      b.bias_x = Math.cos(ba); b.bias_y = Math.sin(ba)
+      b.bias_x = Math.cos(ba)
+      b.bias_y = Math.sin(ba)
 
       if b.impulse_cooldown > 0
         b.impulse_cooldown -= 1
@@ -211,27 +264,34 @@ module Flock
       # Seek target (flow-field direction already in seek_dx/seek_dy)
       if b.tier == 3
         sx, sy = steer_to(seek_dx, seek_dy, b.vx, b.vy)
-        ax += sx * (near_idol ? 5.0 : 3.5); ay += sy * (near_idol ? 5.0 : 3.5)
+        ax += sx * (near_idol ? 5.0 : 3.5)
+        ay += sy * (near_idol ? 5.0 : 3.5)
       elsif near_idol
         sx, sy = steer_to(seek_dx, seek_dy, b.vx, b.vy)
-        ax += sx * 5.0; ay += sy * 5.0
+        ax += sx * 5.0
+        ay += sy * 5.0
       elsif best_d2 < IDOL_ATTRACT_RADIUS_SQ
         sx, sy = steer_to(seek_dx, seek_dy, b.vx, b.vy)
         weight = 0.6 * (1.0 - Math.sqrt(best_d2) / Math.sqrt(IDOL_ATTRACT_RADIUS_SQ))
-        ax += sx * weight; ay += sy * weight
+        ax += sx * weight
+        ay += sy * weight
       else
-        # No idol in range — weak flow-toward-player prevents corner sticking
+        # No idol in range — flow-toward-player prevents corner sticking
         sx, sy = steer_to(seek_dx, seek_dy, b.vx, b.vy)
-        ax += sx * 0.3; ay += sy * 0.3
+        ax += sx * 0.6
+        ay += sy * 0.6
       end
 
       # Panic flee from hunters (tier 1+2 only; tier 3 is bigger than they are)
       if b.tier < 3 && !hunters.empty?
-        flee_x = flee_y = 0.0; flee_n = 0
+        flee_x = flee_y = 0.0
+        flee_n = 0
         hunters.each do |h|
-          hdx = b.x - h.x; hdy = b.y - h.y
+          hdx = b.x - h.x
+          hdy = b.y - h.y
           hd2 = hdx * hdx + hdy * hdy
           next if hd2 > HUNTER_FLEE_R_SQ || hd2 < 0.0001
+
           hd = Math.sqrt(hd2)
           weight = 1.0 - hd / HUNTER_FLEE_R
           flee_x += hdx / hd * weight
@@ -240,21 +300,24 @@ module Flock
         end
         if flee_n > 0
           sx, sy = steer_to(flee_x, flee_y, b.vx, b.vy)
-          ax += sx * W_HUNTER_FLEE; ay += sy * W_HUNTER_FLEE
+          ax += sx * W_HUNTER_FLEE
+          ay += sy * W_HUNTER_FLEE
         end
       end
 
       # Player as lure — tier 1+2 attracted to player at medium range (flow-guided)
       if b.tier < 3
-        pdx = player_x - b.x; pdy = player_y - b.y
+        pdx = player_x - b.x
+        pdy = player_y - b.y
         pd2 = pdx * pdx + pdy * pdy
         if pd2 < PLAYER_ATTRACT_RADIUS_SQ
           pfdx, pfdy = FlowField.direction(flow_player, b.x, b.y)
-          use_dx = (pfdx != 0.0 || pfdy != 0.0) ? pfdx : pdx
-          use_dy = (pfdx != 0.0 || pfdy != 0.0) ? pfdy : pdy
+          use_dx = pfdx != 0.0 || pfdy != 0.0 ? pfdx : pdx
+          use_dy = pfdx != 0.0 || pfdy != 0.0 ? pfdy : pdy
           sx, sy = steer_to(use_dx, use_dy, b.vx, b.vy)
           pw = W_PLAYER * player_w_boost * (1.0 - Math.sqrt(pd2) / Math.sqrt(PLAYER_ATTRACT_RADIUS_SQ))
-          ax += sx * pw; ay += sy * pw
+          ax += sx * pw
+          ay += sy * pw
         end
       end
 
@@ -269,9 +332,11 @@ module Flock
       effective_min = MIN_SPEED * b.personality[:speed_scale] * b.speed_mult * speed_boost
       sp = Math.sqrt(b.vx * b.vx + b.vy * b.vy)
       if sp > effective_max
-        b.vx = b.vx / sp * effective_max; b.vy = b.vy / sp * effective_max
+        b.vx = b.vx / sp * effective_max
+        b.vy = b.vy / sp * effective_max
       elsif sp < effective_min && sp > 0.0001
-        b.vx = b.vx / sp * effective_min; b.vy = b.vy / sp * effective_min
+        b.vx = b.vx / sp * effective_min
+        b.vy = b.vy / sp * effective_min
       end
 
       b.x += b.vx
@@ -290,13 +355,15 @@ module Flock
     wall_rects.each do |rect|
       nx = b.x.clamp(rect[:x], rect[:x] + rect[:w])
       ny = b.y.clamp(rect[:y], rect[:y] + rect[:h])
-      dx = b.x - nx; dy = b.y - ny
+      dx = b.x - nx
+      dy = b.y - ny
       d2 = dx * dx + dy * dy
       next if d2 >= r2 || d2 < 0.0001
 
       d       = Math.sqrt(d2)
       overlap = r - d
-      px = dx / d; py = dy / d
+      px = dx / d
+      py = dy / d
       b.x += px * overlap
       b.y += py * overlap
 
@@ -317,24 +384,30 @@ module Flock
       ((i + 1)...boids.length).each do |j|
         b     = boids[j]
         min_d = a.collision_r + b.collision_r
-        dx    = b.x - a.x; dy = b.y - a.y
-        d2    = dx * dx + dy * dy
+        dx    = b.x - a.x
+        dy = b.y - a.y
+        d2 = dx * dx + dy * dy
         next if d2 >= min_d * min_d || d2 < 0.0001
 
         d  = Math.sqrt(d2)
-        nx = dx / d; ny = dy / d
+        nx = dx / d
+        ny = dy / d
         push = (min_d - d) * 0.5
 
-        a.x -= nx * push; a.y -= ny * push
-        b.x += nx * push; b.y += ny * push
+        a.x -= nx * push
+        a.y -= ny * push
+        b.x += nx * push
+        b.y += ny * push
 
         va_n = a.vx * nx + a.vy * ny
         vb_n = b.vx * nx + b.vy * ny
         if va_n > 0
-          a.vx -= nx * va_n * COLLISION_DAMP; a.vy -= ny * va_n * COLLISION_DAMP
+          a.vx -= nx * va_n * COLLISION_DAMP
+          a.vy -= ny * va_n * COLLISION_DAMP
         end
         if vb_n < 0
-          b.vx -= nx * vb_n * COLLISION_DAMP; b.vy -= ny * vb_n * COLLISION_DAMP
+          b.vx -= nx * vb_n * COLLISION_DAMP
+          b.vy -= ny * vb_n * COLLISION_DAMP
         end
       end
     end
@@ -343,11 +416,15 @@ module Flock
   def self.steer_to(dx, dy, vx, vy)
     mag = Math.sqrt(dx * dx + dy * dy)
     return [0.0, 0.0] if mag < 0.0001
-    dxn = dx / mag * MAX_SPEED; dyn = dy / mag * MAX_SPEED
-    sx  = dxn - vx; sy  = dyn - vy
+
+    dxn = dx / mag * MAX_SPEED
+    dyn = dy / mag * MAX_SPEED
+    sx  = dxn - vx
+    sy = dyn - vy
     smag = Math.sqrt(sx * sx + sy * sy)
     if smag > MAX_FORCE
-      sx = sx / smag * MAX_FORCE; sy = sy / smag * MAX_FORCE
+      sx = sx / smag * MAX_FORCE
+      sy = sy / smag * MAX_FORCE
     end
     [sx, sy]
   end
