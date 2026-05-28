@@ -3,7 +3,7 @@ devid=byronbulb
 devtitle=Charles Bandes
 gameid=eldercave
 gametitle=Elder Cave
-version=0.3.2
+version=0.3.3
 icon=metadata/icon.png
 
 # === Flags available at all licensing tiers ===
