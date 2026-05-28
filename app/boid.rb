@@ -211,10 +211,10 @@ module Flock
         best_d2 = Float::INFINITY
         best_dx = best_dy = 0.0
         idols.each_with_index do |idol, idx|
-          next unless idol[:placed]
+          next unless idol.placed?
 
-          dx = idol[:x] - b.x
-          dy = idol[:y] - b.y
+          dx = idol.x - b.x
+          dy = idol.y - b.y
           d2 = dx * dx + dy * dy
           next unless d2 < best_d2
 
