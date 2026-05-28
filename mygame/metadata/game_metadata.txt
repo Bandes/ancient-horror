@@ -1,0 +1,5 @@
+devid=your.dev.id
+devtitle=Your Developer Title
+gameid=your-game-id
+gametitle=Your Game Title
+version=0.0
