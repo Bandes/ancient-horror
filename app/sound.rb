@@ -39,7 +39,7 @@ class Sound
     }
   }.freeze
 
-  attr_accessor :music_vol, :sfx_vol, :sfx_enabled
+  attr_accessor :music_vol, :sfx_vol, :sfx_enabled, :muted
 
   def initialize(gtk)
     @available = {}
@@ -54,10 +54,11 @@ class Sound
     @music_vol   = 1.0
     @sfx_vol     = 0.25
     @sfx_enabled = false
+    @muted       = false
   end
 
   def play(args, key)
-    return unless @sfx_enabled
+    return unless @sfx_enabled && !@muted
 
     path = SFX[key]
     return unless path && available?(path)
@@ -66,7 +67,7 @@ class Sound
   end
 
   def play_gain(args, key, gain: 1.0)
-    return unless @sfx_enabled
+    return unless @sfx_enabled && !@muted
 
     path = SFX[key]
     return unless path && available?(path)
@@ -79,7 +80,8 @@ class Sound
     return unless path && available?(path)
     return if args.audio[key]
 
-    args.audio[key] = { input: path, looping: true, gain: base_gain * @music_vol,
+    args.audio[key] = { input: path, looping: true,
+                        gain: @muted ? 0 : base_gain * @music_vol,
                         base_gain: base_gain, pitch: 1.0, paused: false }
   end
 
@@ -87,8 +89,13 @@ class Sound
     args.audio.each do |_id, track|
       next unless track.is_a?(Hash) && !track[:decay_rate]
 
-      track[:gain] = (track[:base_gain] || 0.8) * @music_vol
+      track[:gain] = @muted ? 0 : (track[:base_gain] || 0.8) * @music_vol
     end
+  end
+
+  def toggle_mute(args)
+    @muted = !@muted
+    apply_music_vol(args)
   end
 
   def stop_music(args, key)
@@ -126,7 +133,7 @@ class Sound
     AMBIENT_GROUPS.each do |key, group|
       @ambient_timers[key] -= 1
       next if @ambient_timers[key] > 0
-      next unless @sfx_enabled
+      next unless @sfx_enabled && !@muted
 
       avail = group[:paths].select { |p| available?(p) }
       args.outputs.sounds << { path: avail.sample, gain: @sfx_vol } unless avail.empty?

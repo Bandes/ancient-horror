@@ -88,7 +88,8 @@ def defaults(args)
   args.state.cave_grid = cave_data[:grid]
   args.state.altar_x   = Cave.tile_center(cave_data[:altar_col], cave_data[:altar_row])[:x]
   args.state.altar_y   = Cave.tile_center(cave_data[:altar_col], cave_data[:altar_row])[:y]
-  args.state.flow_altar     = FlowField.build(cave_data[:grid], cave_data[:altar_col], cave_data[:altar_row])
+  args.state.flow_altar      = FlowField.build(cave_data[:grid], cave_data[:altar_col], cave_data[:altar_row])
+  args.state.flow_altar_fat  = FlowField.build(cave_data[:grid], cave_data[:altar_col], cave_data[:altar_row], clearance: 1)
   args.state.wall_colliders = Cave.generate_wall_colliders(cave_data[:grid])
 
   spawn = Cave.tile_center(cave_data[:spawn_col], cave_data[:spawn_row])
@@ -181,6 +182,11 @@ def defaults(args)
     )
   end
   args.state.sound         = Sound.new(args.gtk)
+  if (prefs = args.state.sound_prefs)
+    args.state.sound.music_vol = prefs[:music_vol]
+    args.state.sound.sfx_vol   = prefs[:sfx_vol]
+    args.state.sound.muted     = prefs[:muted]
+  end
   args.state.touch         = TouchControls.new
   args.state.intro         = true
   args.state.start_tick    = nil
@@ -240,7 +246,8 @@ def tick_flow_fields(args)
   pcell = [player.x.idiv(Cave::TILE_SIZE), player.y.idiv(Cave::TILE_SIZE)]
   if args.state.flow_player_cell != pcell
     args.state.flow_player_cell = pcell
-    args.state.flow_player = FlowField.build(cave, pcell[0], pcell[1])
+    args.state.flow_player     = FlowField.build(cave, pcell[0], pcell[1])
+    args.state.flow_player_fat = FlowField.build(cave, pcell[0], pcell[1], clearance: 1)
   end
 
   idol_sig = args.state.idols.map(&:signature)
@@ -343,7 +350,9 @@ def calc(args)
     hunters: args.state.hunters,
     speed_mult: args.state.boid_speed_mult,
     flow_altar: args.state.flow_altar,
+    flow_altar_fat: args.state.flow_altar_fat,
     flow_player: args.state.flow_player,
+    flow_player_fat: args.state.flow_player_fat,
     flow_idols: args.state.flow_idols,
     wall_rects: args.state.wall_colliders
   )
@@ -602,6 +611,14 @@ def check_infighting(args)
   end
 end
 
+def hunter_waypoint(hx, hy, flow, fallback_x, fallback_y)
+  fdx, fdy = FlowField.direction(flow, hx, hy)
+  return [fallback_x, fallback_y] if fdx == 0.0 && fdy == 0.0
+
+  reach = Cave::TILE_SIZE * 1.5
+  [hx + fdx * reach, hy + fdy * reach]
+end
+
 def tick_hunters(args)
   player = args.state.player
   args.state.hunter_timer += 1
@@ -615,7 +632,14 @@ def tick_hunters(args)
 
   args.state.hunters.each do |h|
     target = h.target(player, placed_idols)
-    h.update(target[:x], target[:y], args.state.wall_colliders)
+    flow = if target[:idol] && args.state.flow_idols
+             idx = args.state.idols.index(target[:idol])
+             idx ? args.state.flow_idols[idx] : args.state.flow_player
+           else
+             args.state.flow_player
+           end
+    tx, ty = hunter_waypoint(h.x, h.y, flow, target[:x], target[:y])
+    h.update(tx, ty, args.state.wall_colliders)
     h.x, h.y = resolve_prop_collisions(h.x, h.y, Hunter::RADIUS, args.state.prop_colliders)
 
     h.aura_drain(player)
@@ -828,20 +852,6 @@ end
 def render_hud(args)
   player = args.state.player
   stage  = args.state.ritual_stage
-
-  counts = [0, 0, 0]
-  args.state.boids.each { |b| counts[b.tier - 1] += 1 }
-
-  hunter_str = args.state.hunters.length > 0 ? "  Hunters: #{args.state.hunters.length}" : ''
-  secs = (args.state.elapsed_ticks || 0).idiv(60)
-  time_str = "#{secs.idiv(60)}:#{(secs % 60).to_s.rjust(2, '0')}"
-  args.outputs.labels << {
-    x: 10, y: 710,
-    text: "T #{time_str}  Idols: #{player.idols_held}  HP: #{player.hp}  " \
-          "Small: #{counts[0]}  Medium: #{counts[1]}  Large: #{counts[2]}/#{args.state.large_for_win}" \
-          "#{hunter_str}  FPS: #{args.gtk.current_framerate.to_i}",
-    r: 255, g: 255, b: 255, a: 255
-  }
 
   # Modifier reminders bottom-center
   (args.state.modifiers || []).each_with_index do |m, i|

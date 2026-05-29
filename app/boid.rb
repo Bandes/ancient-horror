@@ -143,8 +143,10 @@ class Boid
 
   def wall_force(wall_rects)
     ax = ay = 0.0
-    r  = Flock::WALL_AVOID_R
+    size_ratio = collision_r.to_f / TIER_R[1]
+    r  = Flock::WALL_AVOID_R * size_ratio
     r2 = r * r
+    w  = Flock::W_WALL_AVOID * size_ratio
     wall_rects.each do |rect|
       nx = @x.clamp(rect[:x], rect[:x] + rect[:w])
       ny = @y.clamp(rect[:y], rect[:y] + rect[:h])
@@ -154,7 +156,7 @@ class Boid
       next if d2 > r2 || d2 < 0.0001
 
       d  = Math.sqrt(d2)
-      st = Flock::W_WALL_AVOID * (1.0 - d / r)
+      st = w * (1.0 - d / r)
       ax += dx / d * st
       ay += dy / d * st
     end
@@ -174,16 +176,17 @@ class Boid
     altar_dx = world.altar_x - @x
     altar_dy = world.altar_y - @y
     altar_d2 = altar_dx * altar_dx + altar_dy * altar_dy
+    at_altar  = altar_d2 < Cave::ALTAR_RADIUS * Cave::ALTAR_RADIUS
     pdx = world.player_x - @x
     pdy = world.player_y - @y
     pd2 = pdx * pdx + pdy * pdy
-    targeting_player = pd2 < altar_d2
+    targeting_player = !at_altar && pd2 < altar_d2
     {
       best_dx: targeting_player ? pdx : altar_dx,
       best_dy: targeting_player ? pdy : altar_dy,
       best_d2: targeting_player ? pd2 : altar_d2,
-      near_idol: altar_d2 < Cave::ALTAR_RADIUS * Cave::ALTAR_RADIUS,
-      flow_field: targeting_player ? world.flow_player : world.flow_altar
+      near_idol: at_altar,
+      flow_field: targeting_player ? world.flow_player_fat : world.flow_altar_fat
     }
   end
 
@@ -309,7 +312,8 @@ class Boid
     pd2 = pdx * pdx + pdy * pdy
     return [0.0, 0.0] unless pd2 < Flock::PLAYER_ATTRACT_RADIUS_SQ
 
-    pfdx, pfdy = FlowField.direction(world.flow_player, @x, @y)
+    field = @tier >= 2 ? world.flow_player_fat : world.flow_player
+    pfdx, pfdy = FlowField.direction(field, @x, @y)
     use_dx = pfdx != 0.0 || pfdy != 0.0 ? pfdx : pdx
     use_dy = pfdx != 0.0 || pfdy != 0.0 ? pfdy : pdy
     sx, sy = Flock.steer_to(use_dx, use_dy, @vx, @vy)
@@ -322,17 +326,20 @@ end
 
 class FlockWorld
   attr_reader :cave_grid, :idols, :altar_x, :altar_y, :player_x, :player_y,
-              :hunters, :flow_altar, :flow_player, :flow_idols, :wall_rects,
-              :speed_boost, :player_w_boost
+              :hunters, :flow_altar, :flow_altar_fat, :flow_player, :flow_player_fat,
+              :flow_idols, :wall_rects, :speed_boost, :player_w_boost
 
   def initialize(cave_grid:, idols:, altar_x:, altar_y:, player_x:, player_y:,
                  hunters:, ritual_stage:, speed_mult:,
-                 flow_altar:, flow_player:, flow_idols:, wall_rects:)
+                 flow_altar:, flow_altar_fat:, flow_player:, flow_player_fat:,
+                 flow_idols:, wall_rects:)
     @cave_grid = cave_grid; @idols = idols
     @altar_x = altar_x; @altar_y = altar_y
     @player_x = player_x; @player_y = player_y
     @hunters = hunters
-    @flow_altar = flow_altar; @flow_player = flow_player; @flow_idols = flow_idols
+    @flow_altar = flow_altar; @flow_altar_fat = flow_altar_fat
+    @flow_player = flow_player; @flow_player_fat = flow_player_fat
+    @flow_idols = flow_idols
     @wall_rects = wall_rects
     @speed_boost    = (1.0 + ritual_stage * 0.15) * speed_mult
     @player_w_boost = 1.0 + ritual_stage * 0.25
@@ -441,14 +448,17 @@ module Flock
   # Thin shim — main.rb still calls Flock.step. New code should use FlockSimulation directly.
   def self.step(boids, cave_grid:, idols:, altar_x:, altar_y:, player_x:, player_y:,
                 ritual_stage: 0, hunters: [], speed_mult: 1.0,
-                flow_altar: nil, flow_player: nil, flow_idols: nil, wall_rects: [])
+                flow_altar: nil, flow_altar_fat: nil,
+                flow_player: nil, flow_player_fat: nil,
+                flow_idols: nil, wall_rects: [])
     world = FlockWorld.new(
       cave_grid: cave_grid, idols: idols,
       altar_x: altar_x, altar_y: altar_y,
       player_x: player_x, player_y: player_y,
       hunters: hunters, ritual_stage: ritual_stage, speed_mult: speed_mult,
-      flow_altar: flow_altar, flow_player: flow_player, flow_idols: flow_idols,
-      wall_rects: wall_rects
+      flow_altar: flow_altar, flow_altar_fat: flow_altar_fat,
+      flow_player: flow_player, flow_player_fat: flow_player_fat,
+      flow_idols: flow_idols, wall_rects: wall_rects
     )
     FlockSimulation.new(world).step(boids)
   end

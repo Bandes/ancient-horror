@@ -102,7 +102,7 @@ class Inquisitor < Hunter
   def target(player, placed_idols)
     return { x: player.x, y: player.y } if placed_idols.empty?
     nearest = placed_idols.min_by { |i| (i.x - @x)**2 + (i.y - @y)**2 }
-    { x: nearest.x, y: nearest.y }
+    { x: nearest.x, y: nearest.y, idol: nearest }
   end
 end
 

@@ -53,13 +53,27 @@ module Screens
 
     render_base(args)
     death_text = args.state.death_cause == :insanity ? 'YOU HAVE GONE INSANE' : 'YOU HAVE BEEN CONSUMED'
-    args.outputs.labels << { x: 640, y: 400, text: death_text,
+    args.outputs.labels << { x: 640, y: 420, text: death_text,
                              alignment_enum: 1, size_enum: 8, r: 255, g: 50, b: 50, a: 255 }
-    args.outputs.labels << { x: 640, y: 355, text: 'press any key or click to restart',
-                             alignment_enum: 1, r: 200, g: 200, b: 200, a: 255 }
+
+    secs = (args.state.elapsed_ticks || 0).idiv(60)
+    time_str = "#{secs.idiv(60)}m #{secs % 60}s"
+    args.outputs.labels << { x: 640, y: 375, text: "Survived #{time_str}   Merges: #{args.state.total_merges || 0}",
+                             alignment_enum: 1, size_enum: 1, r: 180, g: 140, b: 180, a: 255 }
+
+    mods = args.state.modifiers || []
+    unless mods.empty?
+      args.outputs.labels << { x: 640, y: 349, text: 'Omens: ' + mods.map(&:label).join('  ·  '),
+                               alignment_enum: 1, size_enum: -2, r: 200, g: 180, b: 120, a: 200 }
+    end
+
+    args.outputs.labels << { x: 640, y: 310, text: 'press any key or click to restart',
+                             alignment_enum: 1, r: 160, g: 160, b: 180, a: 255 }
     if any_action_pressed?(args)
       args.state.sound.stop_all_music(args)
+      prefs = { music_vol: args.state.sound.music_vol, sfx_vol: args.state.sound.sfx_vol, muted: args.state.sound.muted }
       args.state = {}
+      args.state.sound_prefs = prefs
     end
     true
   end
@@ -118,20 +132,24 @@ module Screens
     sel   = args.state.pause_sel ||= 0
     kd    = args.inputs.keyboard.key_down
 
-    sel = (sel - 1) % 2 if kd.up   || kd.w
-    sel = (sel + 1) % 2 if kd.down || kd.s
+    sel = (sel - 1) % 3 if kd.up   || kd.w
+    sel = (sel + 1) % 3 if kd.down || kd.s
     args.state.pause_sel = sel
 
-    step = 0.05
-    delta = 0
-    delta = -step if kd.left  || kd.a
-    delta =  step if kd.right || kd.d
-    if delta != 0
-      if sel == 0
-        sound.music_vol = (sound.music_vol + delta).clamp(0.0, 1.0).round(2)
-        sound.apply_music_vol(args)
-      else
-        sound.sfx_vol = (sound.sfx_vol + delta).clamp(0.0, 1.0).round(2)
+    if sel == 2
+      sound.toggle_mute(args) if kd.space || kd.enter || kd.left || kd.right
+    else
+      step = 0.05
+      delta = 0
+      delta = -step if kd.left  || kd.a
+      delta =  step if kd.right || kd.d
+      if delta != 0
+        if sel == 0
+          sound.music_vol = (sound.music_vol + delta).clamp(0.0, 1.0).round(2)
+          sound.apply_music_vol(args)
+        else
+          sound.sfx_vol = (sound.sfx_vol + delta).clamp(0.0, 1.0).round(2)
+        end
       end
     end
 
@@ -140,8 +158,9 @@ module Screens
     args.outputs.sprites << { x: 0, y: 0, w: 1280, h: 720, path: :solid, r: 0, g: 0, b: 0, a: 160 }
 
     panel_x = 440; panel_w = 400
-    panel_h = 210 + (mods.empty? ? 0 : 28 + mods.length * 18)
-    panel_y = 255 - (mods.empty? ? 0 : 28 + mods.length * 18)
+    mod_extra = mods.empty? ? 0 : 28 + mods.length * 18
+    panel_h = 275 + mod_extra
+    panel_y = 190 - mod_extra
     args.outputs.sprites << { x: panel_x, y: panel_y, w: panel_w, h: panel_h, path: :solid,
                               r: 12, g: 8, b: 28, a: 235 }
     args.outputs.borders << { x: panel_x, y: panel_y, w: panel_w, h: panel_h,
@@ -171,15 +190,25 @@ module Screens
                                 size_enum: -1, r: lr, g: lg, b: lb, a: 220 }
     end
 
-    args.outputs.labels << { x: 640, y: 272, text: '← → adjust   ↑ ↓ select   ESC resume',
+    mute_active = sel == 2
+    mr = mute_active ? 255 : 150
+    mg = mute_active ? 220 : 140
+    mb = mute_active ? 255 : 170
+    args.outputs.labels << { x: 490, y: 267, text: 'MUTE',
+                             size_enum: 1, r: mr, g: mg, b: mb, a: 255 }
+    mute_text = sound.muted ? '[ ON ]' : '[ OFF ]'
+    args.outputs.labels << { x: 590, y: 267, text: mute_text,
+                             size_enum: 1, r: mr, g: mg, b: mb, a: 255 }
+
+    args.outputs.labels << { x: 640, y: 207, text: '← → adjust   ↑ ↓ select   ESC resume',
                              alignment_enum: 1, size_enum: -2, r: 120, g: 100, b: 155, a: 200 }
 
     return if mods.empty?
 
-    args.outputs.labels << { x: 640, y: 258, text: 'OMENS',
+    args.outputs.labels << { x: 640, y: 193, text: 'OMENS',
                              alignment_enum: 1, size_enum: -2, r: 200, g: 180, b: 100, a: 200 }
     mods.each_with_index do |m, i|
-      args.outputs.labels << { x: 640, y: 242 - i * 18,
+      args.outputs.labels << { x: 640, y: 177 - i * 18,
                                text: "#{m.label} — #{m.desc}",
                                alignment_enum: 1, size_enum: -3,
                                r: 220, g: 200, b: 130, a: 220 }
